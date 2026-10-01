@@ -1,0 +1,59 @@
+name: Build and publish
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    # Runs on every push and PR: this is also what closes the "no CI" gap on its own --
+    # a broken build-logic change gets caught here before it ever reaches a consumer.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: chmod +x gradlew
+      - run: ./gradlew build
+
+  publish:
+    # Only on an actual version tag (v1.0.0, v1.2.3, ...): a plain push to master builds
+    # and validates but never publishes, so master can move freely between releases.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: chmod +x gradlew
+
+      # Strips the leading 'v' from the tag (v1.0.0 -> 1.0.0) so gradle.properties'
+      # `version = "0.0.0-local"` placeholder is only ever used for local/dev builds,
+      # never for anything actually published.
+      - name: Resolve version from tag
+        id: version
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish plugin markers + jar to build/publish-repo
+        run: ./gradlew publish -PpanzerBuildLogicVersion=${{ steps.version.outputs.value }}
+
+      # gh-pages serves plain static files -- no server, no auth, no GitHub Packages
+      # token required for consumers, just a URL. This is what
+      # templates/settings.gradle.kts points its fallback `maven(...)` repository at.
+      - name: Publish static Maven repo to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./build/publish-repo
+          destination_dir: maven
+          keep_files: true

@@ -1,0 +1,6 @@
+.*/
+!.github/
+build/
+
+*.config.json
+*.xml
