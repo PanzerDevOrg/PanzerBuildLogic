@@ -118,6 +118,13 @@ val commonToml = File(modRoot, "../panzer-build-logic/common.stonecutter.propert
 val modToml = File(modRoot, "mod.stonecutter.properties.toml")
 val mergedToml = File(modRoot, "stonecutter.properties.toml")
 
+// Declare both source TOMLs as configuration-cache inputs. Reads through plain
+// File APIs here are not reliably fingerprinted, which let an edited TOML build
+// with stale values from the cache; providers.fileContents() is always tracked.
+listOf(modToml, commonToml).filter { it.exists() }.forEach {
+    providers.fileContents(layout.rootDirectory.file(it.relativeTo(rootDir).invariantSeparatorsPath)).asBytes.get()
+}
+
 // Merge first (in-memory + write to disk) so the version list below and the
 // diagnostics pass further down both read from one resolved set of tables.
 val mergedTables: List<TomlTable> = run {

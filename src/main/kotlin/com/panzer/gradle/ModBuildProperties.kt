@@ -80,11 +80,11 @@ data class ModBuildProperties(
             val sc = project.extensions.getByType(StonecutterBuildExtension::class.java)
 
             fun req(key: String): String =
-                sc.readPropertyAsString(key)
+                freshProperty(project, key) ?: sc.readPropertyAsString(key)
                     ?: error("Property '$key' is missing in 'stonecutter.properties.toml' for active target '${sc.current.version}'.")
 
             fun optional(key: String, default: String = ""): String =
-                sc.readPropertyAsString(key) ?: default
+                freshProperty(project, key) ?: sc.readPropertyAsString(key) ?: default
 
             val parsed = sc.current.parsed
             val requiredJava = when {
@@ -166,6 +166,29 @@ data class ModBuildProperties(
             )
         }
 
+        /**
+         * Resolves [key] from a fresh parse of the merged stonecutter.properties.toml:
+         * dotted keys ("mod.version") from their table, plain keys from the active
+         * ["<version>"] block with [overrides.<mod_id>."<version>"] applied.
+         *
+         * Stonecutter's own `properties` reader caches the parsed file for the
+         * lifetime of the Gradle daemon, so after editing the TOML it kept serving
+         * the previous values (e.g. stale version ranges in the built jar) until
+         * the daemon restarted. Reading the file here avoids that.
+         */
+        internal fun freshProperty(project: Project, key: String): String? {
+            val tables = TomlBlockReader.parse(project.rootProject.file("stonecutter.properties.toml"))
+            if (tables.isEmpty()) return null
+            if (key.contains('.')) {
+                val table = TomlBlockReader.find(tables, *key.substringBeforeLast('.').split('.').toTypedArray())
+                return table?.entries?.get(key.substringAfterLast('.'))
+            }
+            val sc = project.extensions.findByType(StonecutterBuildExtension::class.java) ?: return null
+            val modId = TomlBlockReader.find(tables, "mod")?.entries?.get("id") ?: return null
+            if (TomlBlockReader.find(tables, sc.current.version) == null) return null
+            return VersionOverrides.resolve(tables, modId, sc.current.version)[key]
+        }
+
         /** Reads a property from Stonecutter trying String, Long, and Boolean types. */
         private fun StonecutterBuildExtension.readPropertyAsString(key: String): String? {
             properties.getOrNull<String>(key)?.let { return it }
@@ -220,7 +243,8 @@ data class ModBuildProperties(
     /** Reads a mandatory property from Stonecutter for the currently active project. */
     fun req(project: Project, key: String): String {
         val sc = project.extensions.getByType(StonecutterBuildExtension::class.java)
-        return sc.properties.getOrNull<String>(key)
+        return freshProperty(project, key)
+            ?: sc.properties.getOrNull<String>(key)
             ?: sc.properties.getOrNull<Long>(key)?.toString()
             ?: sc.properties.getOrNull<Boolean>(key)?.toString()
             ?: error("Property '$key' is missing in 'stonecutter.properties.toml' for active target '${sc.current.version}'.")
@@ -229,7 +253,8 @@ data class ModBuildProperties(
     /** Reads an optional property from Stonecutter with a default fallback. */
     fun optional(project: Project, key: String, default: String = ""): String {
         val sc = project.extensions.getByType(StonecutterBuildExtension::class.java)
-        return sc.properties.getOrNull<String>(key)
+        return freshProperty(project, key)
+            ?: sc.properties.getOrNull<String>(key)
             ?: sc.properties.getOrNull<Long>(key)?.toString()
             ?: sc.properties.getOrNull<Boolean>(key)?.toString()
             ?: default
