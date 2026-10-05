@@ -1,0 +1,109 @@
+name: Mod release (reusable)
+
+# Called by each mod's package workflow after it has built its jars. One job,
+# three destinations, all driven by publishing/panzer_publish.py:
+#   GitHub release   universal + per-system + sources jars, SHA256SUMS, changelog
+#   Modrinth         universal jar per Minecraft range, dependencies, featured flags
+#   CurseForge       universal jar per Minecraft range, with every tag resolved
+#                    (Minecraft versions, NeoForge, Java, Client/Server) or a hard error
+#
+# dry-run (the default) does everything but the uploads and leaves a
+# "release-preview" artifact: the Modrinth page, the CurseForge page, the GitHub
+# release and the upload table, rendered as they would appear. Not public.
+on:
+  workflow_call:
+    inputs:
+      jars-artifact:
+        description: Artifact holding the collected jars (build/libs/<version>/*.jar)
+        type: string
+        required: true
+      dry-run:
+        description: Plan, check and preview only
+        type: boolean
+        default: true
+      targets:
+        description: Comma-separated subset of github,modrinth,curseforge
+        type: string
+        default: github,modrinth,curseforge
+      build-logic-ref:
+        type: string
+        default: master
+    secrets:
+      MODRINTH_TOKEN:
+        required: false
+      CURSEFORGE_TOKEN:
+        required: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      PUBLISH: panzer-build-logic/publishing/panzer_publish.py
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: mod
+      - uses: actions/checkout@v5
+        with:
+          repository: PanzerDevOrg/PanzerBuildLogic
+          ref: ${{ inputs.build-logic-ref }}
+          path: panzer-build-logic
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install --quiet markdown-it-py
+
+      - uses: actions/download-artifact@v5
+        with:
+          name: ${{ inputs.jars-artifact }}
+          path: dist
+
+      # Release tag: the pushed tag, or v<[mod] version> for manual/dry runs.
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"; fi
+
+      # Offline checks always; online checks (game versions known to each site) when tokens exist.
+      # A dry run reports problems without failing the build (e.g. master before the changelog exists).
+      - name: Plan and check
+        continue-on-error: ${{ inputs.dry-run }}
+        env:
+          CURSEFORGE_TOKEN: ${{ secrets.CURSEFORGE_TOKEN }}
+        run: |
+          python3 "$PUBLISH" check --mod mod --dist dist --out out ${{ steps.tag.outputs.tag && format('--tag {0}', steps.tag.outputs.tag) || '' }}
+
+      - name: Upload release preview
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: release-preview
+          path: out/
+          if-no-files-found: warn
+
+      - name: Publish
+        continue-on-error: ${{ inputs.dry-run }}
+        env:
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+          CURSEFORGE_TOKEN: ${{ secrets.CURSEFORGE_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          python3 "$PUBLISH" publish --mod mod --dist dist --out out --targets "${{ inputs.targets }}" \
+            ${{ steps.tag.outputs.tag && format('--tag {0}', steps.tag.outputs.tag) || '' }} \
+            ${{ inputs.dry-run && '--dry-run' || '' }}
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## ${{ inputs.dry-run && 'Release dry run (nothing uploaded)' || 'Release' }}"
+            echo
+            echo '```'
+            cat out/publish.log 2>/dev/null || echo "(no publish log)"
+            echo '```'
+            echo
+            echo "Rendered pages: download the **release-preview** artifact and open \`preview.html\`."
+          } >> "$GITHUB_STEP_SUMMARY"

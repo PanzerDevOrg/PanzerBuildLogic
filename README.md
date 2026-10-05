@@ -182,6 +182,16 @@ without it the committed binaries are used as they are (no CMake needed). Other
 platforms come from CI runners of each OS. `-Ppanzer.native.buildType=Debug`,
 `-Ppanzer.native.cmakeArgs="..."` and `-Ppanzer.native.test=false` tune the build.
 
+## Publishing (Modrinth, CurseForge, GitHub releases)
+
+`publishing/panzer_publish.py` and the reusable workflows `mod-release.yml` /
+`mod-description.yml` publish every mod the same way: README.md as the single
+description for all sites, per-system jars on GitHub releases, CurseForge tags
+resolved explicitly, and a dry-run preview of everything. See
+[`publishing/README.md`](publishing/README.md). Per-system jars come from
+`[publish] platforms` in the mod's TOML (`<os>Jar` / `platformJars` tasks,
+wired into `buildAndCollect`).
+
 ## External tool versioning
 
 ```toml

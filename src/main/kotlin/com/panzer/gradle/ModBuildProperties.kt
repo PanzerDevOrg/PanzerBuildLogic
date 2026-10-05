@@ -60,6 +60,8 @@ data class ModBuildProperties(
     val jvmModules: Map<String, OptionalJvmModule>,
     /** Native libraries declared under [natives.*], indexed by name. */
     val natives: Map<String, NativeLibrarySpec> = emptyMap(),
+    /** Per-system jars from `[publish] platforms` (see [PlatformJars]). */
+    val publishPlatforms: List<String> = emptyList(),
 ) {
     companion object {
         /**
@@ -166,6 +168,7 @@ data class ModBuildProperties(
                 tools = ToolVersions.from(tables),
                 jvmModules = jvmModules,
                 natives = NativeLibrarySpec.from(tables),
+                publishPlatforms = PlatformJars.parseList(TomlBlockReader.find(tables, "publish")?.entries?.get("platforms")),
             )
         }
 

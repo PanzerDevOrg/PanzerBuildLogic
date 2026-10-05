@@ -1,0 +1,66 @@
+name: Mod description (reusable)
+
+# The mod's README.md is its only description. This turns it into:
+#   Modrinth    pushed through the API (body + client/server sides) unless dry-run
+#   CurseForge  curseforge.html, to paste once into the project's description
+#               editor (Source/HTML mode). CurseForge has no API for project
+#               descriptions, so this is the one manual step; the job summary
+#               says when it is needed.
+on:
+  workflow_call:
+    inputs:
+      dry-run:
+        type: boolean
+        default: false
+      build-logic-ref:
+        type: string
+        default: master
+    secrets:
+      MODRINTH_TOKEN:
+        required: false
+
+jobs:
+  description:
+    runs-on: ubuntu-latest
+    env:
+      PUBLISH: panzer-build-logic/publishing/panzer_publish.py
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: mod
+      - uses: actions/checkout@v5
+        with:
+          repository: PanzerDevOrg/PanzerBuildLogic
+          ref: ${{ inputs.build-logic-ref }}
+          path: panzer-build-logic
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install --quiet markdown-it-py
+
+      - name: Render and sync
+        env:
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+        run: python3 "$PUBLISH" sync --mod mod --out out ${{ inputs.dry-run && '--dry-run' || '' }}
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: descriptions
+          path: out/
+
+      - name: CurseForge instructions
+        run: |
+          {
+            echo "## Descriptions"
+            echo
+            echo "- **Modrinth**: ${{ inputs.dry-run && 'not updated (dry run)' || 'updated from README.md' }}"
+            echo "- **CurseForge**: download the **descriptions** artifact, open the project's description editor,"
+            echo "  switch to *Source*/HTML and replace everything with \`curseforge.html\`."
+            echo
+            echo "<details><summary>curseforge.html</summary>"
+            echo
+            echo '```html'
+            cat out/curseforge.html
+            echo '```'
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"

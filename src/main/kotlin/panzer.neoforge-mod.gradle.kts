@@ -7,6 +7,7 @@ import com.panzer.gradle.NativePlatform
 import com.panzer.gradle.NeoForgeMutexPlugin
 import com.panzer.gradle.OptimizeTexturesTask
 import com.panzer.gradle.PanzerModExtension
+import com.panzer.gradle.PlatformJars
 import com.panzer.gradle.PreprocessJvmModuleTask
 import dev.kikugie.stonecutter.build.StonecutterBuildExtension
 import java.util.*
@@ -244,6 +245,10 @@ dependencies {
     testImplementation("org.junit.jupiter:junit-jupiter-api")
     testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+if (hasStonecutterExtension) {
+    PlatformJars.register(project, modProps.publishPlatforms, modProps.modVersion)
 }
 
 if (hasStonecutterExtension) {

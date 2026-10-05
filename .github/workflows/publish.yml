@@ -23,6 +23,17 @@ jobs:
       - run: chmod +x gradlew
       - run: ./gradlew build
 
+  publishing-tests:
+    # The release/description publisher every mod's CI runs (publishing/).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install --quiet markdown-it-py
+      - run: python3 -m unittest discover -s publishing -v
+
   publish:
     # Only on an actual version tag (v1.0.0, v1.2.3, ...): a plain push to master builds
     # and validates but never publishes, so master can move freely between releases.
