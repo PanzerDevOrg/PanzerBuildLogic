@@ -281,6 +281,19 @@ Without `report` the run is a smoke test (the server starts with the jar, then
 stops cleanly): for libraries with no check of their own, an empty `[compat]`
 table is enough.
 
+A client-only mod sets `side = "client"`: each version then runs in a real game
+client (a throwaway ModDevGradle project on that NeoForge, the jars in its
+`run/mods`, Xvfb + Mesa in CI). Its check must write `report` in the game
+directory and close the game; `client_options` lines go to `options.txt`.
+
+```toml
+[compat]
+side = "client"
+jvm_args = ["-Dtessera.selftest=true", "-Xmx2G"]
+report = "tessera-selftest.txt"
+client_options = ["onboardAccessibility:false", "narrator:0"]
+```
+
 In CI: Mods workflow, action `compat` (optionally `versions` = build versions to
 check), one job per build version, a summary per claimed version and the server
 logs as artifacts. Locally: `panzer compat plan --mod <dir>`, then

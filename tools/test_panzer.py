@@ -320,6 +320,18 @@ class Versions(unittest.TestCase):
         self.assertEqual(widened.count('versionRange = "[0,)"'), 2)
         self.assertIn('versionRange = "[0.2.0,)"', widened)
 
+    def test_compat_client_project(self):
+        import panzer_compat
+        self.mod.config["compat"] = {"side": "client"}
+        with self.assertRaises(PanzerError):  # a client check must write a report
+            panzer_compat.run_client(self.mod, "1.21.1", {"minecraft": "1.21", "neoforge": "21.0.167", "java": 21},
+                                     Path(self.tmp.name))
+        build = panzer_compat._CLIENT_BUILD % {"moddev": panzer_compat.moddev_version(), "java": 21,
+                                               "neoforge": "21.0.167", "jvm_args": 'listOf("-Dx=true")'}
+        self.assertIn('version = "21.0.167"', build)
+        self.assertIn('jvmArguments.addAll(listOf("-Dx=true"))', build)
+        self.assertTrue((panzer_compat.BUILD_LOGIC / "gradlew").is_file())
+
     def test_matrix_java(self):
         java = {row["version"]: row["java"] for row in panzer_versions.matrix()}
         self.assertEqual((java["1.21.1"], java["26.1"]), (21, 25))

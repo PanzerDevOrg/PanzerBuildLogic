@@ -17,6 +17,17 @@ its TOML:
 Without `report` (a library such as Celeris, with no check of its own) the run
 is a smoke test: the server must start with the jar ("Done"), then stop cleanly.
 
+A client-only mod (`side = "client"`) is run in a real game client instead: a
+throwaway ModDevGradle project per version (`runCompat`, NeoForge `target`),
+the jars in its `run/mods`, under Xvfb when there is no display. Its check
+must stop the client and write `report` in the game directory:
+
+    [compat]
+    side = "client"
+    jvm_args = ["-Dtessera.selftest=true", "-Xmx2G"]
+    report = "tessera-selftest.txt"
+    client_options = ["onboardAccessibility:false", "narrator:0"]   # options.txt
+
 The jars' own minecraft/neoforge version ranges are widened for the run (that
 claim is exactly what is being checked). A version whose jar fails to load,
 crashes or reports FAIL must not be claimed.
@@ -129,6 +140,8 @@ def java_home(java: int) -> str:
 def run(mod: Mod, version: str, target: dict, work: Path) -> tuple[bool, list[str]]:
     """Installs NeoForge `target` in `work`, runs the mod's check there; (passed, report lines)."""
     cfg = mod.config.get("compat") or {}
+    if cfg.get("side") == "client":
+        return run_client(mod, version, target, work)
     mc, neoforge = target["minecraft"], target["neoforge"]
     server = work / f"server-{mc}"
     shutil.rmtree(server, ignore_errors=True)
@@ -166,6 +179,84 @@ def run(mod: Mod, version: str, target: dict, work: Path) -> tuple[bool, list[st
             pass
     if not report.is_file():
         return False, [f"no {cfg['report']}: the server did not finish the check", *failure_lines(server, log)]
+    lines = report.read_text(encoding="utf-8").splitlines()
+    return bool(lines) and lines[0].rstrip().endswith("PASS"), lines
+
+
+BUILD_LOGIC = Path(__file__).resolve().parents[1]
+
+_CLIENT_SETTINGS = """pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        maven("https://maven.neoforged.net/releases/")
+    }
+}
+rootProject.name = "compat-client"
+"""
+
+_CLIENT_BUILD = """plugins { id("net.neoforged.moddev") version "%(moddev)s" }
+java { toolchain { languageVersion = JavaLanguageVersion.of(%(java)d) } }
+neoForge {
+    version = "%(neoforge)s"
+    runs {
+        create("compat") {
+            client()
+            gameDirectory = file("run")
+            jvmArguments.addAll(%(jvm_args)s)
+        }
+    }
+}
+"""
+
+
+def moddev_version() -> str:
+    m = re.search(r'^moddev\s*=\s*"([^"]+)"', (BUILD_LOGIC / "common.stonecutter.properties.toml").read_text(), re.M)
+    if not m:
+        raise PanzerError("no [plugins] moddev in the common TOML")
+    return m.group(1)
+
+
+def run_client(mod: Mod, version: str, target: dict, work: Path) -> tuple[bool, list[str]]:
+    """A game client of `target` (ModDevGradle run) with the jars in its mods/; the mod's check reports."""
+    cfg = mod.config.get("compat") or {}
+    if not cfg.get("report"):
+        raise PanzerError(f"{mod.name}: a client compat run needs [compat] report")
+    mc, neoforge = target["minecraft"], target["neoforge"]
+    project = work / f"client-{mc}"
+    shutil.rmtree(project, ignore_errors=True)
+    game = project / "run"
+    (game / "mods").mkdir(parents=True)
+    shutil.copy2(BUILD_LOGIC / "gradlew", project / "gradlew")
+    shutil.copytree(BUILD_LOGIC / "gradle", project / "gradle")
+    (project / "settings.gradle.kts").write_text(_CLIENT_SETTINGS)
+    (project / "build.gradle.kts").write_text(_CLIENT_BUILD % {
+        "moddev": moddev_version(), "java": target["java"], "neoforge": neoforge,
+        "jvm_args": "listOf(" + ", ".join(json.dumps(a) for a in cfg.get("jvm_args", [])) + ")",
+    })
+    for jar in [mod_jar(mod, version), *dependency_jars(mod, version, mc, work)]:
+        copy_widened(jar, game / "mods" / jar.name)
+    if cfg.get("client_options"):
+        (game / "options.txt").write_text("\n".join(cfg["client_options"]) + "\n")
+
+    env = dict(os.environ, JAVA_HOME=java_home(21))
+    env["PATH"] = f"{env['JAVA_HOME']}/bin{os.pathsep}{env['PATH']}"
+    jdks = ",".join(k for k in ("JAVA_HOME_21_X64", "JAVA_HOME_25_X64") if k in os.environ)
+    command = ["bash", "gradlew", "runCompat", "--no-daemon", "--console=plain", "--no-watch-fs"]
+    if jdks:
+        command.append(f"-Porg.gradle.java.installations.fromEnv={jdks}")
+    if not os.environ.get("DISPLAY") and shutil.which("xvfb-run"):
+        command = ["xvfb-run", "-a", "-s", "-screen 0 1280x720x24", *command]
+
+    log = game / "compat-console.log"
+    with open(log, "w", encoding="utf-8") as console:
+        try:
+            subprocess.run(command, cwd=project, env=env, stdout=console, stderr=subprocess.STDOUT,
+                           stdin=subprocess.DEVNULL, timeout=60 * int(cfg.get("timeout_minutes", 20)))
+        except subprocess.TimeoutExpired:
+            pass
+    report = game / cfg["report"]
+    if not report.is_file():
+        return False, [f"no {cfg['report']}: the client did not finish the check", *failure_lines(game, log)]
     lines = report.read_text(encoding="utf-8").splitlines()
     return bool(lines) and lines[0].rstrip().endswith("PASS"), lines
 

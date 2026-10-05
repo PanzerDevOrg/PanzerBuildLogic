@@ -4,7 +4,9 @@ name: Mod compat (reusable)
 # (game_versions in its ["<version>"] blocks): one job per build version builds
 # its jar, then `panzer compat run` installs the NeoForge dedicated server of
 # every claimed version and runs the mod's own check there ([compat] in its
-# TOML). A version that fails must not be claimed.
+# TOML). A version that fails must not be claimed. A client-only mod
+# ([compat] side = "client") is run in a game client of each version instead,
+# under Xvfb with Mesa's software OpenGL.
 on:
   workflow_call:
     inputs:
@@ -27,6 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       builds: ${{ steps.compat.outputs.builds }}
+      client: ${{ steps.compat.outputs.client }}
       source-deps: ${{ steps.ci.outputs.source-deps }}
       cache-key: ${{ steps.ci.outputs.cache-key }}
     steps:
@@ -116,6 +119,12 @@ jobs:
           chmod +x ./gradlew
           ./gradlew buildAndCollect -Pstonecutter.versions="$VERSION" $GRADLE_JDKS -x test --no-watch-fs
 
+      - name: Virtual display
+        if: needs.plan.outputs.client == 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb libgl1-mesa-dri libglx-mesa0 mesa-utils > /dev/null
+
       - name: Run it on every version it claims
         env:
           BUILD: ${{ toJSON(matrix.build) }}
@@ -129,4 +138,8 @@ jobs:
             mod/build/compat/server-*/logs/
             mod/build/compat/server-*/compat-console.log
             mod/build/compat/server-*/*.txt
+            mod/build/compat/client-*/run/logs/
+            mod/build/compat/client-*/run/compat-console.log
+            mod/build/compat/client-*/run/*.txt
+            mod/build/compat/client-*/run/crash-reports/
           if-no-files-found: ignore

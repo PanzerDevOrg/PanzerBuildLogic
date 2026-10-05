@@ -329,6 +329,8 @@ def cmd_compat(args) -> int:
         if args.github_output and out:
             with open(out, "a", encoding="utf-8") as f:
                 f.write(f"builds={result}\n")
+                client = (mod.config.get("compat") or {}).get("side") == "client"
+                f.write(f"client={'true' if client else 'false'}\n")
         print(result)
         return 0
     build = json.loads(args.build)
