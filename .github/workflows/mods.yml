@@ -49,6 +49,9 @@ permissions:
 jobs:
   plan:
     runs-on: ubuntu-latest
+    # Job level: a step's `if` cannot read secrets or its own env.
+    env:
+      HAS_TOKEN: ${{ secrets.PANZER_SYNC_TOKEN != '' }}
     outputs:
       mods: ${{ steps.mods.outputs.mods }}
       action: ${{ steps.mods.outputs.action }}
@@ -58,7 +61,6 @@ jobs:
         env:
           ACTION: ${{ inputs.action || 'sync' }}
           SELECT: ${{ inputs.mods || 'all' }}
-          HAS_TOKEN: ${{ secrets.PANZER_SYNC_TOKEN != '' }}
         run: |
           action="$ACTION"
           if [ "$HAS_TOKEN" != "true" ] && { [ "$action" = sync ] || [ "$action" = release ]; }; then
@@ -66,20 +68,30 @@ jobs:
             action=check
           fi
           echo "action=$action" >> "$GITHUB_OUTPUT"
-          echo "mods=$(python3 tools/panzer.py mods --json --select "$SELECT")" >> "$GITHUB_OUTPUT"
+          mods=$(python3 tools/panzer.py mods --json --select "$SELECT")
+          # Without the token a private mod cannot even be checked out.
+          if [ "$HAS_TOKEN" != "true" ] && { [ "$action" = build ] || [ "$action" = check ]; }; then
+            skipped=$(echo "$mods" | python3 -c 'import json,sys; print(" ".join(m["repo"] for m in json.load(sys.stdin) if m["private"]))')
+            [ -z "$skipped" ] || echo "::warning::Skipping private $skipped: reading it needs the PANZER_SYNC_TOKEN secret."
+            mods=$(echo "$mods" | python3 -c 'import json,sys; print(json.dumps([m for m in json.load(sys.stdin) if not m["private"]]))')
+          fi
+          echo "mods=$mods" >> "$GITHUB_OUTPUT"
 
       # A set but unusable token fails here, with the reason in the summary,
       # instead of every mod job failing to check out.
       - name: Check PANZER_SYNC_TOKEN
-        if: steps.mods.outputs.action == 'sync' || steps.mods.outputs.action == 'release'
+        if: >-
+          steps.mods.outputs.action == 'sync' || steps.mods.outputs.action == 'release' ||
+          (steps.mods.outputs.action == 'build' && env.HAS_TOKEN == 'true')
         env:
           PANZER_SYNC_TOKEN: ${{ secrets.PANZER_SYNC_TOKEN }}
           SELECT: ${{ inputs.mods || 'all' }}
-        run: python3 tools/panzer.py token-check --select "$SELECT" --summary "$GITHUB_STEP_SUMMARY"
+          READ_ONLY: ${{ steps.mods.outputs.action == 'build' && '--read-only' || '' }}
+        run: python3 tools/panzer.py token-check --gate --select "$SELECT" $READ_ONLY --summary "$GITHUB_STEP_SUMMARY"
 
   sync:
     needs: plan
-    if: needs.plan.outputs.action == 'sync' || needs.plan.outputs.action == 'check'
+    if: needs.plan.outputs.mods != '[]' && (needs.plan.outputs.action == 'sync' || needs.plan.outputs.action == 'check')
     name: ${{ needs.plan.outputs.action }} ${{ matrix.mod.key }}
     runs-on: ubuntu-latest
     strategy:
@@ -110,16 +122,26 @@ jobs:
           fi
           echo "::warning::Cannot read ${{ matrix.mod.repo }} without the PANZER_SYNC_TOKEN secret (see .env.example)."
 
+      # panzer exits 1 when `check` finds differences and 2 on errors; an
+      # error (or any failure while syncing) stops here, before anything is
+      # committed, so a half-written sync is never pushed.
       - name: panzer ${{ needs.plan.outputs.action }}
         id: sync
         if: steps.checkout.outcome == 'success'
         env:
           ACTION: ${{ needs.plan.outputs.action }}
+          REPO: ${{ matrix.mod.repo }}
         run: |
-          set -o pipefail
-          python3 panzer-build-logic/tools/panzer.py "$ACTION" mod --diff --ci | tee sync.log || true
+          set +e
+          python3 panzer-build-logic/tools/panzer.py "$ACTION" mod --diff --ci 2>&1 | tee sync.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          { echo "### $REPO"; echo '```'; cat sync.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$rc" -ge 2 ] || { [ "$ACTION" = sync ] && [ "$rc" -ne 0 ]; }; then
+            echo "::error::panzer $ACTION failed for $REPO (exit $rc); nothing was committed."
+            exit 1
+          fi
           echo "changed=$([ -n "$(git -C mod status --porcelain)" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-          { echo "### ${{ matrix.mod.repo }}"; echo '```'; cat sync.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Commit and push to master
         if: steps.checkout.outcome == 'success' && needs.plan.outputs.action == 'sync' && steps.sync.outputs.changed == 'true'
@@ -148,7 +170,7 @@ jobs:
 
   build:
     needs: plan
-    if: needs.plan.outputs.action == 'build'
+    if: needs.plan.outputs.mods != '[]' && needs.plan.outputs.action == 'build'
     strategy:
       fail-fast: false
       matrix:
@@ -164,7 +186,7 @@ jobs:
 
   release:
     needs: plan
-    if: needs.plan.outputs.action == 'release'
+    if: needs.plan.outputs.mods != '[]' && needs.plan.outputs.action == 'release'
     name: release ${{ matrix.mod.key }}
     runs-on: ubuntu-latest
     strategy:

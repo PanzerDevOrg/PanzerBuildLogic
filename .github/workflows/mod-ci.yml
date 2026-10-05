@@ -188,11 +188,18 @@ jobs:
           path: panzer-build-logic
           persist-credentials: false
 
+      # Zulu, because panzer.neoforge-mod asks for Azul toolchains: with the
+      # JDKs Gradle needs already installed (and named to it), it never
+      # downloads one (cdn.azul.com timeouts used to fail builds).
       - name: Set up JDKs
         uses: actions/setup-java@v5
         with:
-          distribution: temurin
+          distribution: zulu
           java-version: ${{ needs.plan.outputs.java }}
+      - name: Point Gradle at them
+        env:
+          JAVAS: ${{ needs.plan.outputs.java }}
+        run: echo "GRADLE_JDKS=-Porg.gradle.java.installations.fromEnv=$(printf '%s\n' $JAVAS | sed 's/.*/JAVA_HOME_&_X64/' | paste -sd, -)" >> "$GITHUB_ENV"
 
       # [depends_on.<id>] ci_build_from_source: that mod's default branch,
       # published to mavenLocal (which the build resolves first), for
@@ -224,7 +231,7 @@ jobs:
           echo "$DEPS" | python3 -c 'import json,sys; [print(d["id"], d["repo"], d["versions"]) for d in json.load(sys.stdin)]' |
           while read -r id repo versions; do
             echo "::group::$repo -> mavenLocal ($versions)"
-            (cd "../dep-$id" && chmod +x gradlew && ./gradlew publishToMavenLocal -Pstonecutter.versions="$versions" -x test --no-watch-fs --stacktrace)
+            (cd "../dep-$id" && chmod +x gradlew && ./gradlew publishToMavenLocal -Pstonecutter.versions="$versions" $GRADLE_JDKS -x test --no-watch-fs --stacktrace)
             echo "::endgroup::"
           done
 
@@ -242,7 +249,7 @@ jobs:
           STRICT: ${{ needs.plan.outputs.strict-natives }}
         run: |
           chmod +x ./gradlew
-          ./gradlew $TASKS -Ppanzer.native.strict=$STRICT --no-watch-fs --stacktrace
+          ./gradlew $TASKS -Ppanzer.native.strict=$STRICT $GRADLE_JDKS --no-watch-fs --stacktrace
 
       # Universal jar: every declared native and the legal files; per-system
       # jars: only their OS's natives (java: none); sources jar present.
@@ -278,8 +285,12 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-java@v5
         with:
-          distribution: temurin
+          distribution: zulu
           java-version: ${{ needs.plan.outputs.java }}
+      - name: Point Gradle at the JDKs
+        env:
+          JAVAS: ${{ needs.plan.outputs.java }}
+        run: echo "GRADLE_JDKS=-Porg.gradle.java.installations.fromEnv=$(printf '%s\n' $JAVAS | sed 's/.*/JAVA_HOME_&_X64/' | paste -sd, -)" >> "$GITHUB_ENV"
       - name: Download native builds
         if: needs.plan.outputs.has-natives == 'true'
         uses: actions/download-artifact@v5
@@ -297,7 +308,7 @@ jobs:
       - name: Publish every version to the staging Maven tree
         run: |
           chmod +x ./gradlew
-          ./gradlew publishAllPublicationsToGitHubPagesRepository -Ppanzer.native.strict=${{ needs.plan.outputs.strict-natives }} --no-watch-fs --stacktrace
+          ./gradlew publishAllPublicationsToGitHubPagesRepository -Ppanzer.native.strict=${{ needs.plan.outputs.strict-natives }} $GRADLE_JDKS --no-watch-fs --stacktrace
 
       - name: Publish static Maven repo to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4

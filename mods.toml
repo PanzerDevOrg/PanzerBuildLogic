@@ -4,6 +4,7 @@
 #   repo:   GitHub repository (Owner/Repo)
 #   folder: local checkout next to panzer-build-logic (default: the repository
 #           name; PANZER_MODS_DIR changes the parent folder)
+#   private: true for private repositories (only readable with PANZER_SYNC_TOKEN)
 
 [mods.celeris]
 repo = "PanzerDevOrg/Celeris"
@@ -13,3 +14,4 @@ repo = "PanzerDevOrg/Tessera"
 
 [mods.velox]
 repo = "PanzerDevOrg/velox"
+private = true

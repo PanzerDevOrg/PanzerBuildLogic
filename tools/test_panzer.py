@@ -206,6 +206,20 @@ class Ci(unittest.TestCase):
         self.assertTrue(any("windows-x86_64/zstd.dll" in e for e in errors))
 
 
+class Selection(unittest.TestCase):
+    def test_keys_are_case_and_space_insensitive(self):
+        self.assertEqual([m.key for m in panzer.select_mods(" Velox , CELERIS")], ["celeris", "velox"])
+        self.assertEqual(len(panzer.select_mods("all")), len(panzer.select_mods("")))
+
+    def test_unknown_key_is_an_error_with_exit_code_2(self):
+        with self.assertRaises(PanzerError):
+            panzer.select_mods("nope")
+        self.assertEqual(panzer.main(["mods", "--select", "nope"]), 2)
+
+    def test_private_flag(self):
+        self.assertTrue(next(m for m in panzer.select_mods("velox")).private)
+
+
 class New(unittest.TestCase):
     def test_scaffold(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -260,8 +274,8 @@ class TokenCheck(unittest.TestCase):
                                                          "Write access to repository not granted." if receive == 403 else "")
 
     def run_check(self, token=FINE, repos=("PanzerDevOrg/A",)):
-        lines, ok, warnings = self.pt.check(token, list(repos))
-        return "\n".join(lines), ok, warnings
+        r = self.pt.check(token, list(repos))
+        return "\n".join(r.lines), r.ok, r.warnings
 
     def test_good_fine_grained_leaves_workflows_unconfirmed(self):
         self.fake(headers={"github-authentication-token-expiration": "2027-01-01 00:00:00 UTC"})
@@ -396,6 +410,47 @@ class TokenCheck(unittest.TestCase):
         result = self.pt.classify("PanzerDevOrg/A", "fine-grained", R(200, {}), R(200, {}), R(418, {}, "a|b\nc"))
         self.assertNotIn("|", result.problems[0])
         self.assertNotIn("\n", result.problems[0])
+
+    def test_read_only_needs_no_push(self):
+        self.fake(receive=403, private=True)
+        r = self.pt.check(FINE, ["PanzerDevOrg/A"], need_write=False)
+        self.assertTrue(r.ok)
+        self.assertIn("can read every selected mod", "\n".join(r.lines))
+
+    def test_error_body_read_failure_is_a_network_error(self):
+        import io
+        import urllib.error
+        import urllib.request
+
+        class Body(io.BytesIO):
+            def read(self, *a):
+                raise TimeoutError()
+        saved = urllib.request.urlopen
+        try:
+            def fail(*a, **k):
+                raise urllib.error.HTTPError("https://api.github.com/user", 502, "Bad Gateway", {}, Body())
+            urllib.request.urlopen = fail
+            r = self.saved[0](FINE, "/user")
+            self.assertEqual(r.status, 0)
+            self.assertTrue(r.unreachable)
+        finally:
+            urllib.request.urlopen = saved
+
+    def test_gate_only_stops_an_unusable_token(self):
+        import panzer
+        R = self.pt.Response
+        self.fake()
+        good_api = self.pt.api
+        self.pt.api = lambda token, path: R(404, {}, "Not Found") if path == "/repos/PanzerDevOrg/velox" else good_api(token, path)
+        self.pt.git_service = lambda token, repo, svc: R(404 if repo.endswith("velox") else 200, {})
+        os.environ["PANZER_SYNC_TOKEN"] = FINE
+        try:
+            self.assertEqual(panzer.main(["token-check"]), 1)
+            self.assertEqual(panzer.main(["token-check", "--gate"]), 0)
+            self.fake(user_status=401)
+            self.assertEqual(panzer.main(["token-check", "--gate"]), 1)
+        finally:
+            del os.environ["PANZER_SYNC_TOKEN"]
 
     def test_select(self):
         import panzer

@@ -60,6 +60,19 @@ def resolve_mods(names: list[str], all_mods: bool) -> list[Path]:
     return paths
 
 
+def select_mods(select: str) -> list:
+    """mods.toml entries for a --select value: "all" (or empty), or comma-separated
+    keys in any case. Unknown keys are an error rather than an empty selection."""
+    known = registry()
+    keys = [k.strip().lower() for k in (select or "").split(",") if k.strip()]
+    if not keys or keys == ["all"]:
+        return known
+    unknown = [k for k in keys if k not in {m.key for m in known}]
+    if unknown:
+        raise PanzerError(f"unknown mod(s) {', '.join(unknown)}; mods.toml has {', '.join(m.key for m in known)}")
+    return [m for m in known if m.key in keys]
+
+
 def git(root: Path, *args: str, check: bool = True) -> str:
     result = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True)
     if check and result.returncode != 0:
@@ -99,7 +112,7 @@ def cmd_sync(args, write: bool) -> int:
 
 def cmd_mods(args) -> int:
     rows = []
-    for m in registry():
+    for m in select_mods(args.select):
         state = "no checkout"
         if m.path:
             try:
@@ -107,12 +120,11 @@ def cmd_mods(args) -> int:
                 state = "in sync" if not changes else f"{len(changes)} file(s) differ"
             except PanzerError as e:
                 state = f"error: {e}"
-        rows.append({"key": m.key, "repo": m.repo, "path": str(m.path or ""), "state": state})
-    selected = [r for r in rows if args.select in ("", "all") or r["key"] in args.select.split(",")]
+        rows.append({"key": m.key, "repo": m.repo, "private": m.private, "path": str(m.path or ""), "state": state})
     if args.json:
-        print(json.dumps([{"key": r["key"], "repo": r["repo"]} for r in selected]))
+        print(json.dumps([{"key": r["key"], "repo": r["repo"], "private": r["private"]} for r in rows]))
         return 0
-    for r in selected:
+    for r in rows:
         print(f"{r['key']:10} {r['repo']:28} {r['state']:20} {r['path']}")
     return 0
 
@@ -225,23 +237,28 @@ def cmd_doctor(args) -> int:
 def cmd_token(args) -> int:
     import panzer_token
     raw = os.environ.get("PANZER_SYNC_TOKEN", "")
-    warnings = []
     if not raw.strip():
-        lines, ok = ["PANZER_SYNC_TOKEN is not set (environment, .env, or the repository secret in CI).", "",
-                     "Result: the token is NOT ready (see .env.example)."], False
+        result = panzer_token.Report(["PANZER_SYNC_TOKEN is not set (environment, .env, or the repository secret "
+                                      "in CI).", "", "Result: the token is NOT ready (see .env.example)."], False, [])
     else:
-        keys = [k.strip() for k in args.select.split(",") if k.strip()]
-        repos = sorted({m.repo for m in registry() if args.select in ("", "all") or m.key in keys})
-        lines, ok, warnings = panzer_token.check(raw, repos)
-    report = "\n".join(lines)
+        repos = sorted({m.repo for m in select_mods(args.select)})
+        result = panzer_token.check(raw, repos, need_write=not args.read_only)
+    report = "\n".join(result.lines)
     print(report)
-    if os.environ.get("GITHUB_ACTIONS"):
-        for w in warnings:
+    in_ci = bool(os.environ.get("GITHUB_ACTIONS"))
+    if in_ci:
+        for w in result.warnings:
             print(f"::warning::{w}")
     if args.summary:
         with open(args.summary, "a", encoding="utf-8") as f:
             f.write("## PANZER_SYNC_TOKEN\n\n" + report + "\n")
-    return 0 if ok else 1
+    if args.gate and result.usable:
+        # Only a token that works nowhere stops the run; a repository it cannot
+        # handle is reported here and fails its own job, not everyone's.
+        for failure in result.failed:
+            print(f"::error::{failure}" if in_ci else f"error: {failure}")
+        return 0
+    return 0 if result.ok else 1
 
 
 def cmd_ci(args) -> int:
@@ -299,6 +316,9 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("token-check", help="check PANZER_SYNC_TOKEN against every mod repository")
     s.add_argument("--summary", help="also append the report to this file (GitHub step summary)")
     s.add_argument("--select", default="all", help="comma-separated keys from mods.toml, or all")
+    s.add_argument("--read-only", action="store_true", help="only reading is needed (e.g. to build)")
+    s.add_argument("--gate", action="store_true",
+                   help="fail only if the token works for no selected repository (CI pre-check)")
     sub.add_parser("publish", help="release publisher (see publishing/README.md)", add_help=False)
     s = sub.add_parser("ci", help="CI helpers")
     s.add_argument("ci_command", choices=["plan", "verify-jars"])
@@ -314,8 +334,13 @@ def main(argv: list[str] | None = None) -> int:
         return {"mods": cmd_mods, "new": cmd_new, "release": cmd_release, "secrets": cmd_secrets,
                 "doctor": cmd_doctor, "token-check": cmd_token, "ci": cmd_ci}[args.command](args)
     except PanzerError as e:
+        # 2, not 1: `check` uses 1 for "files differ", and CI tells them apart.
         print(f"error: {e}", file=sys.stderr)
-        return 1
+        return 2
+    except Exception:  # noqa: BLE001 - a crash is an error, never "files differ"
+        import traceback
+        traceback.print_exc()
+        return 2
 
 
 if __name__ == "__main__":

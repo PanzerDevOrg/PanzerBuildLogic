@@ -56,7 +56,14 @@ def _request(url: str, headers: dict[str, str], attempts: int = 2) -> Response:
             with urllib.request.urlopen(request, timeout=30) as r:
                 result = _response(r.status, r.headers, r.read(65536))
         except urllib.error.HTTPError as e:
-            result = _response(e.code, e.headers, e.read(65536))
+            # Errors raised in this handler skip the sibling clauses below. A lost
+            # body could hide a rate limit, so it counts as no answer (status 0).
+            try:
+                body = e.read(65536)
+            except (OSError, http.client.HTTPException) as cut:
+                result = Response(0, {}, f"network error: {type(cut).__name__}")
+            else:
+                result = _response(e.code, e.headers, body)
         except ValueError:
             # An unsendable header (from the token) or URL; the exception text
             # would contain the token, so it is not kept. UnicodeError is a ValueError.
@@ -215,22 +222,31 @@ def _badly_pasted(token_kind: str, token: str, notes: list[str], headline: str, 
     return lines
 
 
-def check(raw: str, repos: list[str]) -> tuple[list[str], bool, list[str]]:
-    """Report lines, overall success and warnings worth an annotation.
-    `raw` is the secret exactly as stored."""
+@dataclasses.dataclass
+class Report:
+    lines: list[str]
+    ok: bool  # every selected repository passed
+    warnings: list[str]  # worth an annotation
+    usable: bool = False  # the token works for at least one repository
+    failed: list[str] = dataclasses.field(default_factory=list)  # "<repo>: <problems>"
+
+
+def check(raw: str, repos: list[str], need_write: bool = True) -> Report:
+    """`raw` is the secret exactly as stored; need_write=False only requires
+    reading (building mods from panzer-build-logic)."""
     token = raw.strip()
     token_kind = kind(token)
     notes = shape(raw)
     if not TOKEN_CHARS.fullmatch(token):
         # Not sendable as-is (and certainly not a token): no request is made.
-        return _badly_pasted(token_kind, token, notes, "This is not a usable token.", rejected=False), False, []
+        return Report(_badly_pasted(token_kind, token, notes, "This is not a usable token.", rejected=False), False, [])
     user = api(token, "/user")
     if user.status == 401:
-        return _badly_pasted(token_kind, token, notes, "GitHub does not accept this token (401 Bad credentials).",
-                             rejected=True), False, []
+        return Report(_badly_pasted(token_kind, token, notes, "GitHub does not accept this token (401 Bad credentials).",
+                                    rejected=True), False, [])
     if user.status != 200:
-        return [f"Could not check the token: GitHub answered {user.status} {cell(user.message)}".strip()
-                + ". GitHub or the network failed; run it again."], False, []
+        return Report([f"Could not check the token: GitHub answered {user.status} {cell(user.message)}".strip()
+                       + ". GitHub or the network failed; run it again."], False, [])
 
     # GitHub accepted it, so length/prefix guesses are only informative now;
     # surrounding whitespace is trimmed everywhere the token is used.
@@ -254,12 +270,12 @@ def check(raw: str, repos: list[str]) -> tuple[list[str], bool, list[str]]:
         result = classify(repo, token_kind, api(token, f"/repos/{repo}"),
                           git_service(token, repo, "git-upload-pack"),
                           git_service(token, repo, "git-receive-pack"))
-        if result.write:
+        if result.write and need_write:
             for note in master_rules(token, repo):
                 result.problems.append(note)
                 warnings.append(f"{repo}: {note}")
         results.append(result)
-        ok &= result.read and result.write
+        ok &= result.read and (result.write or not need_write)
         u = result.unchecked
         lines.append(f"| {repo} | {mark(result.visible, u)} | {mark(result.read, u)} | {mark(result.write, u)} | "
                      f"{'; '.join(result.problems) or '-'} |")
@@ -272,6 +288,8 @@ def check(raw: str, repos: list[str]) -> tuple[list[str], bool, list[str]]:
                   "Pending requests).", ""]
     if not ok:
         lines.append("Result: the token is NOT ready; fix the problems above (see .env.example).")
+    elif not need_write:
+        lines.append("Result: the token can read every selected mod.")
     elif token_kind == "fine-grained":
         unverified = ("Workflows permission not verifiable: open the token at "
                       "https://github.com/settings/personal-access-tokens and confirm its repository permissions "
@@ -282,4 +300,6 @@ def check(raw: str, repos: list[str]) -> tuple[list[str], bool, list[str]]:
                   "Result: read and push work on every mod; only the Workflows permission above is unconfirmed."]
     else:
         lines.append("Result: the token can do everything the Mods workflow needs.")
-    return lines, ok, warnings
+    passed = lambda r: r.read and (r.write or not need_write)
+    failed = [f"{r.repo}: {'; '.join(r.problems) or 'not usable'}" for r in results if not passed(r)]
+    return Report(lines, ok, warnings, usable=any(passed(r) for r in results) or not results, failed=failed)

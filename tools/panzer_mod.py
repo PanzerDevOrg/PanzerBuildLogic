@@ -161,6 +161,7 @@ class Registered:
     key: str
     repo: str  # Owner/Repo on GitHub
     path: Path | None  # local checkout, if any
+    private: bool = False  # only readable with PANZER_SYNC_TOKEN in panzer-build-logic's CI
 
 
 def registry(build_logic: Path = BUILD_LOGIC) -> list[Registered]:
@@ -173,5 +174,5 @@ def registry(build_logic: Path = BUILD_LOGIC) -> list[Registered]:
         folder = entry.get("folder", entry["repo"].split("/")[-1])
         candidates = [base / folder, base / folder.lower(), base / key]
         path = next((c for c in candidates if (c / MOD_TOML).is_file()), None)
-        mods.append(Registered(key, entry["repo"], path))
+        mods.append(Registered(key.lower(), entry["repo"], path, bool(entry.get("private", False))))
     return mods
