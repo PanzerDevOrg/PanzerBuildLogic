@@ -1,7 +1,9 @@
 @file:Suppress("DestructuringDeclaration")
 
+import com.panzer.gradle.CMakeBuildTask
 import com.panzer.gradle.JvmModulePreprocessor
 import com.panzer.gradle.ModBuildProperties
+import com.panzer.gradle.NativePlatform
 import com.panzer.gradle.NeoForgeMutexPlugin
 import com.panzer.gradle.OptimizeTexturesTask
 import com.panzer.gradle.PanzerModExtension
@@ -356,5 +358,75 @@ if (tasks.findByName("optimizeTextures") == null) {
 if (tasks.findByName("optimizeAllTextures") != null) {
     tasks.named("processResources") {
         dependsOn("optimizeAllTextures")
+    }
+}
+
+// ---------------------------------------------------------------------
+// Native libraries ([natives.<name>] in the TOML)
+//
+// Registered once on the root project (natives do not vary per Minecraft
+// version), like the JVM-module preprocess tasks above:
+//   buildNative<Name>   CMake build for the host -> natives/<os>/<arch>/<file>
+//   buildNatives        all of the above
+//   nativeHeaders<Name> zip of the public headers, for a `native-headers`
+//                       publication artifact
+// -Ppanzer.native.build=true makes processResources depend on buildNatives,
+// so the jar carries a freshly built host binary (CI does this); without it
+// the committed binaries under natives/ are used as they are.
+// ---------------------------------------------------------------------
+
+val nativeSpecs = modProps.natives.values
+if (nativeSpecs.isNotEmpty()) {
+    val host = NativePlatform.host()
+    val buildTasks = nativeSpecs.filter { it.cmakeDir != null }.map { spec ->
+        val taskName = "buildNative${spec.taskSuffix}"
+        if (rootProject.tasks.names.contains(taskName)) {
+            rootProject.tasks.named(taskName)
+        } else {
+            rootProject.tasks.register<CMakeBuildTask>(taskName) {
+                group = "panzer"
+                description = "Builds native library '${spec.name}' (${spec.cmakeDir}) for ${host.classifier} with CMake."
+                sourceDir.set(rootProject.layout.projectDirectory.dir(spec.cmakeDir!!))
+                target.set(spec.name)
+                buildType.set(providers.gradleProperty("panzer.native.buildType").orElse("Release"))
+                cmakeArgs.set(providers.gradleProperty("panzer.native.cmakeArgs")
+                    .map { it.split(' ').filter(String::isNotBlank) }.orElse(emptyList()))
+                runTests.set(providers.gradleProperty("panzer.native.test").map { it.toBoolean() }.orElse(true))
+                buildDir.set(rootProject.layout.buildDirectory.dir("native/${spec.name}/${host.classifier}"))
+                outputLibrary.set(rootProject.layout.projectDirectory.file("natives/${host.sourcePath}/${spec.fileName(host)}"))
+            }
+        }
+    }
+
+    for (spec in nativeSpecs.filter { it.headersDir != null }) {
+        val taskName = "nativeHeaders${spec.taskSuffix}"
+        if (!rootProject.tasks.names.contains(taskName)) {
+            rootProject.tasks.register<Zip>(taskName) {
+                group = "panzer"
+                description = "Packages the public headers of native library '${spec.name}'."
+                from(rootProject.layout.projectDirectory.dir(spec.headersDir!!))
+                archiveBaseName.set("${modProps.modId}-${spec.name}")
+                archiveVersion.set(modProps.modVersion)
+                archiveClassifier.set("native-headers")
+                destinationDirectory.set(rootProject.layout.buildDirectory.dir("native/headers"))
+            }
+        }
+    }
+
+    if (!rootProject.tasks.names.contains("buildNatives")) {
+        rootProject.tasks.register("buildNatives") {
+            group = "panzer"
+            description = "Builds every CMake-backed [natives.*] library for the host platform."
+            dependsOn(buildTasks)
+        }
+    }
+
+    if (providers.gradleProperty("panzer.native.build").map { it.toBoolean() }.getOrElse(false)) {
+        tasks.named("processResources") {
+            dependsOn(buildTasks)
+        }
+        tasks.matching { it.name == "collectNatives" }.configureEach {
+            dependsOn(buildTasks)
+        }
     }
 }

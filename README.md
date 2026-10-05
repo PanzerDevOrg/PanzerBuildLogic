@@ -30,6 +30,8 @@ panzer-build-logic/
     │   ├── PanzerModExtension.kt        # public `panzerMod { }` extension
     │   ├── NeoForgeMutexPlugin.kt       # BuildService serializing createMinecraftArtifacts
     │   ├── OptimizeTexturesTask.kt      # PNG optimization via oxipng (uses ExternalToolResolver)
+    │   ├── NativeLibraries.kt           # [natives.<name>] specs and platform naming
+    │   ├── CMakeBuildTask.kt            # cacheable CMake configure/build/ctest for the host
     │   └── JsonMinifier.kt
     ├── panzer.neoforge-mod.gradle.kts          # main convention plugin
     └── panzer.neoforge-mod-example.gradle.kts  # convention plugin for :example submodules
@@ -153,6 +155,32 @@ anything:
 
 Useful to force a compatibility-mode run, or to turn on a module the TOML has
 disabled, without switching JDKs or committing a TOML change.
+
+## Native libraries
+
+A mod that ships a C/C++ library declares it once:
+
+```toml
+[natives.celeris_physics]
+cmake_dir = "native"            # CMake project; omit for prebuilt binaries
+headers = "native/include"      # optional: zipped as the `native-headers` artifact
+platforms = ["linux-x86_64", "linux-aarch64", "windows-x86_64", "macos-x86_64", "macos-aarch64"]
+```
+
+and the plugin registers, on the root project:
+
+| Task                       | Does                                                                              |
+|----------------------------|-----------------------------------------------------------------------------------|
+| `buildNative<Name>`        | CMake configure + build + `ctest` for the host, copied to `natives/<os>/<arch>/`  |
+| `buildNatives`             | every `buildNative<Name>`                                                         |
+| `nativeHeaders<Name>`      | zip of `headers`, classifier `native-headers`, to attach to a publication         |
+
+The binary lands where each mod's `collectNatives` already stages libraries into the
+jar (`natives/<os>-<arch>/`). `-Ppanzer.native.build=true` makes `processResources`
+and `collectNatives` depend on the build, so the jar carries a fresh host binary;
+without it the committed binaries are used as they are (no CMake needed). Other
+platforms come from CI runners of each OS. `-Ppanzer.native.buildType=Debug`,
+`-Ppanzer.native.cmakeArgs="..."` and `-Ppanzer.native.test=false` tune the build.
 
 ## External tool versioning
 

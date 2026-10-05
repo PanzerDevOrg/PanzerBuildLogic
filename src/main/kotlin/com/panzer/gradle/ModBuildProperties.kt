@@ -58,6 +58,8 @@ data class ModBuildProperties(
     val tools: ToolVersions,
     /** Optional JVM modules declared under [jvm.modules.*], indexed by name. */
     val jvmModules: Map<String, OptionalJvmModule>,
+    /** Native libraries declared under [natives.*], indexed by name. */
+    val natives: Map<String, NativeLibrarySpec> = emptyMap(),
 ) {
     companion object {
         /**
@@ -163,6 +165,7 @@ data class ModBuildProperties(
                 junitVersion = req("dependencies.junit"),
                 tools = ToolVersions.from(tables),
                 jvmModules = jvmModules,
+                natives = NativeLibrarySpec.from(tables),
             )
         }
 
