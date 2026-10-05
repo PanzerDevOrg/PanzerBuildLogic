@@ -22,6 +22,7 @@ import dataclasses
 import http.client
 import json
 import re
+import string
 import time
 import urllib.error
 import urllib.request
@@ -194,7 +195,7 @@ def master_rules(token: str, repo: str) -> list[str]:
 def shape(raw: str) -> list[str]:
     """What is wrong with how the secret was pasted, without revealing it."""
     notes = []
-    token = raw.strip()
+    token = raw.strip(string.whitespace)  # ASCII only, like every place that uses the token
     if raw != token:
         notes.append("the secret has spaces or line breaks around the token (they are trimmed where it is "
                      "used, but save only the token itself)")
@@ -234,7 +235,7 @@ class Report:
 def check(raw: str, repos: list[str], need_write: bool = True) -> Report:
     """`raw` is the secret exactly as stored; need_write=False only requires
     reading (building mods from panzer-build-logic)."""
-    token = raw.strip()
+    token = raw.strip(string.whitespace)  # ASCII only, like every place that uses the token
     token_kind = kind(token)
     notes = shape(raw)
     if not TOKEN_CHARS.fullmatch(token):

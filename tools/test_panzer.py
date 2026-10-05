@@ -305,6 +305,12 @@ class TokenCheck(unittest.TestCase):
         self.assertIn("unknown, 5 characters", text)
         self.assertIn("probably not a token", text)
 
+    def test_unicode_space_around_the_token_is_not_trimmed(self):
+        self.fake()
+        text, ok, _ = self.run_check("\u00a0" + FINE)
+        self.assertFalse(ok)
+        self.assertIn("characters a token never has", text)
+
     def test_whitespace_around_an_accepted_token_is_fine(self):
         self.fake()
         text, ok, _ = self.run_check(FINE + "\n")
