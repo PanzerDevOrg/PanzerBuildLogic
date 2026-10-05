@@ -226,6 +226,10 @@ class Manifest(unittest.TestCase):
 
 
 
+FINE = "github_pat_" + "a" * 82
+CLASSIC = "ghp_" + "a" * 36
+
+
 class TokenCheck(unittest.TestCase):
     """panzer_token with GitHub's answers simulated."""
 
@@ -245,7 +249,7 @@ class TokenCheck(unittest.TestCase):
 
     def test_good_fine_grained(self):
         self.fake(headers={"github-authentication-token-expiration": "2027-01-01 00:00:00 UTC"})
-        lines, ok = self.pt.check("github_pat_x", ["PanzerDevOrg/A"])
+        lines, ok = self.pt.check(FINE, ["PanzerDevOrg/A"])
         self.assertTrue(ok)
         text = "\n".join(lines)
         self.assertIn("fine-grained", text)
@@ -255,29 +259,44 @@ class TokenCheck(unittest.TestCase):
 
     def test_invalid(self):
         self.fake(user_status=401)
-        lines, ok = self.pt.check("github_pat_x", ["PanzerDevOrg/A"])
+        lines, ok = self.pt.check(FINE, ["PanzerDevOrg/A"])
         self.assertFalse(ok)
-        self.assertIn("invalid or expired", lines[0])
+        self.assertIn("401 Bad credentials", lines[0])
+        self.assertIn("fine-grained, 93 characters", lines[0])
+        self.assertNotIn(FINE, "\n".join(lines))
+
+    def test_badly_pasted(self):
+        self.fake(user_status=401)
+        text = "\n".join(self.pt.check(" " + FINE[:50] + "\n", ["PanzerDevOrg/A"])[0])
+        self.assertIn("spaces or line breaks", text)
+        self.assertIn("copied incompletely", text)
+        text = "\n".join(self.pt.check("my sync token", ["PanzerDevOrg/A"])[0])
+        self.assertIn("probably not a token", text)
+
+    def test_whitespace_fails_even_if_github_accepts(self):
+        self.fake()
+        lines, ok = self.pt.check(FINE + "\n", ["PanzerDevOrg/A"])
+        self.assertFalse(ok)
 
     def test_read_only(self):
         self.fake(receive=403)
-        lines, ok = self.pt.check("github_pat_x", ["PanzerDevOrg/A"])
+        lines, ok = self.pt.check(FINE, ["PanzerDevOrg/A"])
         self.assertFalse(ok)
         self.assertIn("Contents: Read and write", "\n".join(lines))
 
     def test_repository_not_selected(self):
         self.fake(repo_status=404, upload=404, receive=404)
-        lines, ok = self.pt.check("github_pat_x", ["PanzerDevOrg/velox"])
+        lines, ok = self.pt.check(FINE, ["PanzerDevOrg/velox"])
         self.assertFalse(ok)
         self.assertIn("select it under Repository access", "\n".join(lines))
 
     def test_classic_scopes(self):
         self.fake(headers={"x-oauth-scopes": "repo"})
-        lines, ok = self.pt.check("ghp_x", ["PanzerDevOrg/A"])
+        lines, ok = self.pt.check(CLASSIC, ["PanzerDevOrg/A"])
         self.assertFalse(ok)
         self.assertIn("missing scopes: workflow", "\n".join(lines))
         self.fake(headers={"x-oauth-scopes": "repo, workflow"})
-        self.assertTrue(self.pt.check("ghp_x", ["PanzerDevOrg/A"])[1])
+        self.assertTrue(self.pt.check(CLASSIC, ["PanzerDevOrg/A"])[1])
 
 
 if __name__ == "__main__":

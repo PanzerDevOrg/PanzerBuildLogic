@@ -217,12 +217,12 @@ def cmd_doctor(args) -> int:
 
 def cmd_token(args) -> int:
     import panzer_token
-    token = os.environ.get("PANZER_SYNC_TOKEN", "").strip()
-    if not token:
+    raw = os.environ.get("PANZER_SYNC_TOKEN", "")
+    if not raw.strip():
         lines, ok = ["PANZER_SYNC_TOKEN is not set (environment, .env, or the repository secret in CI)."], False
     else:
         repos = sorted({m.repo for m in registry()})
-        lines, ok = panzer_token.check(token, repos)
+        lines, ok = panzer_token.check(raw, repos)
     lines.append("")
     lines.append("Result: the token can do everything the Mods workflow needs." if ok else
                  "Result: the token is NOT ready; fix the problems above (see .env.example).")

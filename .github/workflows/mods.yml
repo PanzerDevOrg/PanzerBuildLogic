@@ -68,6 +68,14 @@ jobs:
           echo "action=$action" >> "$GITHUB_OUTPUT"
           echo "mods=$(python3 tools/panzer.py mods --json --select "$SELECT")" >> "$GITHUB_OUTPUT"
 
+      # A set but unusable token fails here, with the reason in the summary,
+      # instead of every mod job failing to check out.
+      - name: Check PANZER_SYNC_TOKEN
+        if: steps.mods.outputs.action == 'sync' || steps.mods.outputs.action == 'release'
+        env:
+          PANZER_SYNC_TOKEN: ${{ secrets.PANZER_SYNC_TOKEN }}
+        run: python3 tools/panzer.py token-check --summary "$GITHUB_STEP_SUMMARY"
+
   sync:
     needs: plan
     if: needs.plan.outputs.action == 'sync' || needs.plan.outputs.action == 'check'
@@ -90,8 +98,16 @@ jobs:
           repository: ${{ matrix.mod.repo }}
           token: ${{ secrets.PANZER_SYNC_TOKEN || github.token }}
           path: mod
-      - if: steps.checkout.outcome != 'success'
-        run: echo "::warning::Cannot read ${{ matrix.mod.repo }}; set the PANZER_SYNC_TOKEN secret (see .env.example)."
+      - name: Repository not readable
+        if: steps.checkout.outcome != 'success'
+        env:
+          HAS_TOKEN: ${{ secrets.PANZER_SYNC_TOKEN != '' }}
+        run: |
+          if [ "$HAS_TOKEN" = true ]; then
+            echo "::error::PANZER_SYNC_TOKEN cannot read ${{ matrix.mod.repo }}. Run this workflow with action 'token' for the reason."
+            exit 1
+          fi
+          echo "::warning::Cannot read ${{ matrix.mod.repo }} without the PANZER_SYNC_TOKEN secret (see .env.example)."
 
       - name: panzer ${{ needs.plan.outputs.action }}
         id: sync

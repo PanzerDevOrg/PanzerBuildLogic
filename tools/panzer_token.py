@@ -107,13 +107,48 @@ def classify(repo: str, token_kind: str, repo_api: Response, upload: Response, r
     return RepoResult(repo, visible, read, write, problems)
 
 
-def check(token: str, repos: list[str]) -> tuple[list[str], bool]:
-    """Report lines and overall success."""
-    lines, ok = [], True
+# Lengths of well-formed tokens: github_pat_ + 82 characters, ghp_ + 36.
+EXPECTED_LENGTH = {"fine-grained": 93, "classic": 40}
+
+
+def shape(raw: str) -> list[str]:
+    """What is wrong with how the secret was pasted, without revealing it."""
+    notes = []
+    token = raw.strip()
+    if raw != token:
+        notes.append("the secret has spaces or line breaks around the token; actions/checkout uses the secret "
+                     "as it is, so save only the token itself")
+    if any(c in token for c in "\"'` "):
+        notes.append("the secret contains quotes or spaces; save only the token itself")
     token_kind = kind(token)
+    if token_kind == "unknown":
+        notes.append("it does not start with github_pat_ (fine-grained) or ghp_ (classic), so it is probably "
+                     "not a token: e.g. the token's name, its page URL, or an SSH key")
+    elif len(token) != EXPECTED_LENGTH[token_kind]:
+        notes.append(f"a {token_kind} token is usually {EXPECTED_LENGTH[token_kind]} characters long and this one "
+                     f"has {len(token)}: it may have been copied incompletely")
+    return notes
+
+
+def check(raw: str, repos: list[str]) -> tuple[list[str], bool]:
+    """Report lines and overall success. `raw` is the secret exactly as stored."""
+    lines, ok = [], True
+    token = raw.strip()
+    token_kind = kind(token)
+    notes = shape(raw)
     user = api(token, "/user")
     if user.status == 401:
-        return ["The token is invalid or expired (GitHub answered 401 Bad credentials). Create a new one."], False
+        lines = [f"GitHub does not accept this token (401 Bad credentials). Type: {token_kind}, "
+                 f"{len(token)} characters.", ""]
+        if notes:
+            lines += ["What looks wrong:", *[f"- {n}" for n in notes], ""]
+        lines += ["Otherwise it was revoked, regenerated, deleted or has expired: create a new one (see "
+                  ".env.example), copy it right after GitHub shows it (it is shown only once), and save it "
+                  "as the secret again."]
+        return lines, False
+    if notes:
+        ok = False
+        lines += ["Problems with the stored secret:", *[f"- {n}" for n in notes], ""]
     if user.status != 200:
         lines.append(f"GET /user answered {user.status} {user.message}".strip())
     lines.append(f"Token type: {token_kind}")
