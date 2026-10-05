@@ -123,7 +123,7 @@ jobs:
         if: needs.plan.outputs.client == 'true'
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq xvfb libgl1-mesa-dri libglx-mesa0 mesa-utils > /dev/null
+          sudo apt-get install -y -qq xvfb libgl1-mesa-dri libglx-mesa0 libegl1 libegl-mesa0 mesa-utils > /dev/null
 
       - name: Run it on every version it claims
         env:

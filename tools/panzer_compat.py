@@ -240,6 +240,9 @@ def run_client(mod: Mod, version: str, target: dict, work: Path) -> tuple[bool, 
 
     env = dict(os.environ, JAVA_HOME=java_home(21))
     env["PATH"] = f"{env['JAVA_HOME']}/bin{os.pathsep}{env['PATH']}"
+    # 26.3+ opens its window through SDL3, whose GLX visual matching finds nothing on
+    # Xvfb + Mesa; EGL (what Mesa offers there anyway) works. GLFW-era versions ignore it.
+    env.setdefault("SDL_VIDEO_FORCE_EGL", "1")
     jdks = ",".join(k for k in ("JAVA_HOME_21_X64", "JAVA_HOME_25_X64") if k in os.environ)
     command = ["bash", "gradlew", "runCompat", "--no-daemon", "--console=plain", "--no-watch-fs"]
     if jdks:
