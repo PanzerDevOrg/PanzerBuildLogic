@@ -61,6 +61,7 @@ jobs:
           ref: ${{ inputs.mod-ref }}
           token: ${{ inputs.mod-repository && secrets.PANZER_SYNC_TOKEN || github.token }}
           path: mod
+          persist-credentials: false
       - uses: actions/checkout@v5
         with:
           repository: PanzerDevOrg/PanzerBuildLogic

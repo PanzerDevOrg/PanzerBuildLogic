@@ -237,66 +237,179 @@ class TokenCheck(unittest.TestCase):
         import panzer_token
         self.pt = panzer_token
         self.saved = (panzer_token.api, panzer_token.git_service)
+        self.delay, panzer_token.RETRY_DELAY = panzer_token.RETRY_DELAY, 0
 
     def tearDown(self):
         self.pt.api, self.pt.git_service = self.saved
+        self.pt.RETRY_DELAY = self.delay
 
-    def fake(self, user_status=200, repo_status=200, upload=200, receive=200, headers=None):
+    def fake(self, user_status=200, repo_status=200, upload=200, receive=200, headers=None, private=False,
+             protected=False, rules=()):
         R = self.pt.Response
-        self.pt.api = lambda token, path: (R(user_status, headers or {}, "", {"login": "bichal"}) if path == "/user"
-                                           else R(repo_status, {}, "Not Found" if repo_status == 404 else ""))
-        self.pt.git_service = lambda token, repo, svc: R(upload if svc == "git-upload-pack" else receive, {})
 
-    def test_good_fine_grained(self):
+        def api(token, path):
+            if path == "/user":
+                return R(user_status, headers or {}, "", {"login": "bichal"})
+            if "/rules/branches/" in path:
+                return R(200, {}, "", {"rules": [{"type": t} for t in rules]})
+            if path.endswith("/branches/master"):
+                return R(200, {}, "", {"protected": protected})
+            return R(repo_status, {}, "Not Found" if repo_status == 404 else "", {"private": private})
+        self.pt.api = api
+        self.pt.git_service = lambda token, repo, svc: R(upload if svc == "git-upload-pack" else receive, {},
+                                                         "Write access to repository not granted." if receive == 403 else "")
+
+    def run_check(self, token=FINE, repos=("PanzerDevOrg/A",)):
+        lines, ok, warnings = self.pt.check(token, list(repos))
+        return "\n".join(lines), ok, warnings
+
+    def test_good_fine_grained_leaves_workflows_unconfirmed(self):
         self.fake(headers={"github-authentication-token-expiration": "2027-01-01 00:00:00 UTC"})
-        lines, ok = self.pt.check(FINE, ["PanzerDevOrg/A"])
+        text, ok, warnings = self.run_check()
         self.assertTrue(ok)
-        text = "\n".join(lines)
-        self.assertIn("fine-grained", text)
         self.assertIn("Acts as: bichal", text)
         self.assertIn("2027-01-01", text)
-        self.assertIn("Workflows permission", text)
+        self.assertIn("only the Workflows permission above is unconfirmed", text)
+        self.assertTrue(any("Workflows" in w for w in warnings))
 
     def test_invalid(self):
         self.fake(user_status=401)
-        lines, ok = self.pt.check(FINE, ["PanzerDevOrg/A"])
+        text, ok, _ = self.run_check()
         self.assertFalse(ok)
-        self.assertIn("401 Bad credentials", lines[0])
-        self.assertIn("fine-grained, 93 characters", lines[0])
-        self.assertNotIn(FINE, "\n".join(lines))
+        self.assertIn("401 Bad credentials", text)
+        self.assertIn("fine-grained, 93 characters", text)
+        self.assertNotIn(FINE, text)
 
     def test_badly_pasted(self):
         self.fake(user_status=401)
-        text = "\n".join(self.pt.check(" " + FINE[:50] + "\n", ["PanzerDevOrg/A"])[0])
-        self.assertIn("spaces or line breaks", text)
+        text = self.run_check(FINE[:50])[0]
         self.assertIn("copied incompletely", text)
-        text = "\n".join(self.pt.check("my sync token", ["PanzerDevOrg/A"])[0])
+        text = self.run_check("my sync token")[0]
+        self.assertIn("characters a token never has", text)
+        self.assertIn("probably not a token", text)
+        text = self.run_check("abcde")[0]
+        self.assertIn("unknown, 5 characters", text)
         self.assertIn("probably not a token", text)
 
-    def test_whitespace_fails_even_if_github_accepts(self):
+    def test_whitespace_around_an_accepted_token_is_fine(self):
         self.fake()
-        lines, ok = self.pt.check(FINE + "\n", ["PanzerDevOrg/A"])
-        self.assertFalse(ok)
+        text, ok, _ = self.run_check(FINE + "\n")
+        self.assertTrue(ok)
 
-    def test_read_only(self):
+    def test_private_repo_read_only(self):
+        self.fake(receive=403, private=True)
+        text, ok, _ = self.run_check()
+        self.assertFalse(ok)
+        self.assertIn("set Contents to Read and write", text)
+        self.assertIn("Write access to repository not granted", text)
+
+    def test_public_repo_push_refused_lists_every_cause(self):
+        self.fake(receive=403, private=False)
+        text, ok, _ = self.run_check()
+        self.assertFalse(ok)
+        self.assertIn("Resource owner = PanzerDevOrg", text)
+        self.assertIn("pending approval", text)
+
+    def test_user_owned_token_diagnosis(self):
+        R = self.pt.Response
         self.fake(receive=403)
-        lines, ok = self.pt.check(FINE, ["PanzerDevOrg/A"])
+        public_api = self.pt.api
+        self.pt.api = lambda token, path: (R(404, {}, "Not Found") if path == "/repos/PanzerDevOrg/velox"
+                                           else public_api(token, path))
+        self.pt.git_service = lambda token, repo, svc: R(
+            404 if repo.endswith("velox") else (200 if svc == "git-upload-pack" else 403), {})
+        text, ok, _ = self.run_check(repos=("PanzerDevOrg/Celeris", "PanzerDevOrg/velox"))
         self.assertFalse(ok)
-        self.assertIn("Contents: Read and write", "\n".join(lines))
+        self.assertIn("Most likely cause", text)
+        self.assertIn("not visible to the token", text)
 
-    def test_repository_not_selected(self):
-        self.fake(repo_status=404, upload=404, receive=404)
-        lines, ok = self.pt.check(FINE, ["PanzerDevOrg/velox"])
-        self.assertFalse(ok)
-        self.assertIn("select it under Repository access", "\n".join(lines))
-
-    def test_classic_scopes(self):
+    def test_classic_scopes_and_wording(self):
         self.fake(headers={"x-oauth-scopes": "repo"})
-        lines, ok = self.pt.check(CLASSIC, ["PanzerDevOrg/A"])
+        text, ok, _ = self.run_check(CLASSIC)
         self.assertFalse(ok)
-        self.assertIn("missing scopes: workflow", "\n".join(lines))
+        self.assertIn("missing scopes: workflow", text)
         self.fake(headers={"x-oauth-scopes": "repo, workflow"})
-        self.assertTrue(self.pt.check(CLASSIC, ["PanzerDevOrg/A"])[1])
+        text, ok, _ = self.run_check(CLASSIC)
+        self.assertTrue(ok)
+        self.assertIn("can do everything", text)
+        self.fake(headers={"x-oauth-scopes": "repo, workflow"}, receive=403)
+        self.assertIn("no write role", self.run_check(CLASSIC)[0])
+
+    def test_master_protection_is_a_warning(self):
+        self.fake(protected=True, rules=("pull_request",))
+        text, ok, warnings = self.run_check()
+        self.assertTrue(ok)
+        self.assertIn("master is protected", text)
+        self.assertTrue(any("pull_request" in w for w in warnings))
+
+    def test_unsendable_token_makes_no_request_and_never_leaks(self):
+        calls = []
+        self.pt.api = lambda *a: calls.append(a)
+        self.pt.git_service = lambda *a: calls.append(a)
+        for raw in (FINE[:40] + "\n" + FINE[40:], "\u201c" + FINE + "\u201d", FINE[:40] + "\r\n" + FINE[40:],
+                    FINE[:40] + "\n " + FINE[40:], FINE[:40] + "\u200b" + FINE[40:]):
+            text, ok, _ = self.run_check(raw)
+            self.assertFalse(ok)
+            self.assertIn("characters a token never has", text)
+            self.assertNotIn(FINE[:40], text)
+            self.assertNotIn(FINE[40:], text)
+        self.assertEqual(calls, [])
+
+    def test_network_failures_are_not_permission_problems(self):
+        R = self.pt.Response
+        self.fake()
+        self.pt.git_service = lambda token, repo, svc: R(0 if svc == "git-receive-pack" else 200, {},
+                                                         "network error: TimeoutError")
+        text, ok, _ = self.run_check()
+        self.assertFalse(ok)
+        self.assertIn("could not check (network error: TimeoutError)", text)
+        self.assertNotIn("Resource owner", text)
+        self.pt.api = lambda token, path: R(503, {}, "Service Unavailable")
+        self.assertIn("GitHub or the network failed", self.run_check()[0])
+
+    def test_request_survives_exceptions(self):
+        import http.client
+        import urllib.request
+        saved = urllib.request.urlopen
+        try:
+            for error in (TimeoutError(), http.client.RemoteDisconnected("x"), ConnectionResetError()):
+                def boom(*a, error=error, **k):
+                    raise error
+                urllib.request.urlopen = boom
+                r = self.saved[0](FINE, "/user")
+                self.assertEqual(r.status, 0)
+                self.assertIn("network error", r.message)
+        finally:
+            urllib.request.urlopen = saved
+
+    def test_unsendable_header_is_caught_without_leaking(self):
+        # Real urlopen: the header error fires before connecting; if it ever
+        # stopped firing, the request would go to 127.0.0.1, not GitHub.
+        for bad in (FINE[:40] + "\n" + FINE[40:], "\u201c" + FINE):
+            r = self.pt._request("http://127.0.0.1:9/", {"Authorization": f"Bearer {bad}"}, attempts=1)
+            self.assertEqual(r.status, 0)
+            self.assertIn("could not be built", r.message)
+            self.assertNotIn(FINE[:40], r.message)
+
+    def test_message_cannot_break_the_table(self):
+        R = self.pt.Response
+        result = self.pt.classify("PanzerDevOrg/A", "fine-grained", R(200, {}), R(200, {}), R(418, {}, "a|b\nc"))
+        self.assertNotIn("|", result.problems[0])
+        self.assertNotIn("\n", result.problems[0])
+
+    def test_select(self):
+        import panzer
+        self.fake()
+        os.environ["PANZER_SYNC_TOKEN"] = FINE
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                summary = Path(tmp) / "summary.md"
+                self.assertEqual(panzer.main(["token-check", "--select", "celeris", "--summary", str(summary)]), 0)
+                text = summary.read_text()
+                self.assertIn("PanzerDevOrg/Celeris", text)
+                self.assertNotIn("PanzerDevOrg/velox", text)
+        finally:
+            del os.environ["PANZER_SYNC_TOKEN"]
 
 
 if __name__ == "__main__":

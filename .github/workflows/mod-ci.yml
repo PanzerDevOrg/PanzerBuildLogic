@@ -65,11 +65,13 @@ jobs:
           ref: ${{ inputs.mod-ref }}
           token: ${{ inputs.mod-repository && secrets.PANZER_SYNC_TOKEN || github.token }}
           path: mod
+          persist-credentials: false
       - uses: actions/checkout@v5
         with:
           repository: PanzerDevOrg/PanzerBuildLogic
           ref: ${{ inputs.build-logic-ref }}
           path: panzer-build-logic
+          persist-credentials: false
 
       - name: Plan from mod.stonecutter.properties.toml
         id: plan
@@ -111,6 +113,7 @@ jobs:
           ref: ${{ inputs.mod-ref }}
           token: ${{ inputs.mod-repository && secrets.PANZER_SYNC_TOKEN || github.token }}
           path: mod
+          persist-credentials: false
       # JNI headers for libraries that need them (JAVA_HOME/include).
       - uses: actions/setup-java@v5
         with:
@@ -177,11 +180,13 @@ jobs:
           ref: ${{ inputs.mod-ref }}
           token: ${{ inputs.mod-repository && secrets.PANZER_SYNC_TOKEN || github.token }}
           path: mod
+          persist-credentials: false
       - uses: actions/checkout@v5
         with:
           repository: PanzerDevOrg/PanzerBuildLogic
           ref: ${{ inputs.build-logic-ref }}
           path: panzer-build-logic
+          persist-credentials: false
 
       - name: Set up JDKs
         uses: actions/setup-java@v5
@@ -191,18 +196,34 @@ jobs:
 
       # [depends_on.<id>] ci_build_from_source: that mod's default branch,
       # published to mavenLocal (which the build resolves first), for
-      # dependencies whose version is not released yet.
+      # dependencies whose version is not released yet. The token only exists
+      # in the clone step (as an HTTP header, never in a URL or .git/config);
+      # the Gradle builds run without it.
+      - name: Fetch dependencies built from source
+        if: needs.plan.outputs.source-deps != '[]'
+        env:
+          DEPS: ${{ needs.plan.outputs.source-deps }}
+          TOKEN: ${{ inputs.mod-repository && secrets.PANZER_SYNC_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          TOKEN="$(printf '%s' "$TOKEN" | tr -d '[:space:]')"
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)"
+          export GIT_CONFIG_VALUE_0
+          echo "$DEPS" | python3 -c 'import json,sys; [print(d["id"], d["repo"]) for d in json.load(sys.stdin)]' |
+          while read -r id repo; do
+            git clone --depth 1 "https://github.com/${repo}.git" "../dep-$id"
+          done
+
       - name: Build dependencies from source
         if: needs.plan.outputs.source-deps != '[]'
         env:
           DEPS: ${{ needs.plan.outputs.source-deps }}
-          TOKEN: ${{ secrets.PANZER_SYNC_TOKEN || github.token }}
         run: |
           set -euo pipefail
           echo "$DEPS" | python3 -c 'import json,sys; [print(d["id"], d["repo"], d["versions"]) for d in json.load(sys.stdin)]' |
           while read -r id repo versions; do
             echo "::group::$repo -> mavenLocal ($versions)"
-            git clone --depth 1 "https://x-access-token:${TOKEN}@github.com/${repo}.git" "../dep-$id"
             (cd "../dep-$id" && chmod +x gradlew && ./gradlew publishToMavenLocal -Pstonecutter.versions="$versions" -x test --no-watch-fs --stacktrace)
             echo "::endgroup::"
           done
@@ -248,11 +269,13 @@ jobs:
       - uses: actions/checkout@v5
         with:
           path: mod
+          persist-credentials: false
       - uses: actions/checkout@v5
         with:
           repository: PanzerDevOrg/PanzerBuildLogic
           ref: ${{ inputs.build-logic-ref }}
           path: panzer-build-logic
+          persist-credentials: false
       - uses: actions/setup-java@v5
         with:
           distribution: temurin

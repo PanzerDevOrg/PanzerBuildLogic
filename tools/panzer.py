@@ -7,7 +7,8 @@
   panzer check [MOD...|--all]      same, but only report what differs (exit 1 if anything)
   panzer new DIR --id ID           scaffold a new mod next to panzer-build-logic, then sync it
   panzer release MOD [--push]      tag v<version> (changelog required); CI publishes the tag
-  panzer secrets [--org ORG]       copy tokens from .env into GitHub Actions secrets (gh CLI)
+  panzer secrets [--org ORG]       copy tokens from .env into GitHub Actions secrets (gh CLI);
+                                   PANZER_SYNC_TOKEN only goes to panzer-build-logic
   panzer publish ...               the release publisher (publishing/panzer_publish.py)
   panzer doctor                    check tools, tokens and checkouts
   panzer token-check               can PANZER_SYNC_TOKEN read, push and tag every mod?
@@ -183,16 +184,22 @@ def cmd_secrets(args) -> int:
     values = {k: os.environ[k] for k in SECRETS if os.environ.get(k)}
     if not values:
         raise PanzerError(f"none of {', '.join(SECRETS)} is set (environment or .env)")
-    if args.org:
-        targets = [["--org", args.org, "--visibility", "all"]]
-    else:
-        repos = {m.repo for m in registry()} | {"PanzerDevOrg/PanzerBuildLogic"}
-        targets = [["--repo", r] for r in sorted(repos)]
-    for target in targets:
-        for key, value in values.items():
-            print(f"{'(dry run) ' if args.dry_run else ''}gh secret set {key} {' '.join(target)}")
-            if not args.dry_run:
-                subprocess.run(["gh", "secret", "set", key, *target], input=value, text=True, check=True)
+    # PANZER_SYNC_TOKEN can push to every mod, so only panzer-build-logic (the
+    # Mods workflow) gets it; the publishing tokens go wherever releases run.
+    build_logic = "PanzerDevOrg/PanzerBuildLogic"
+    mods = sorted({m.repo for m in registry()})
+    plan = []
+    for key, value in values.items():
+        if key == "PANZER_SYNC_TOKEN":
+            plan.append((key, value, ["--repo", build_logic]))
+        elif args.org:
+            plan.append((key, value, ["--org", args.org, "--visibility", "all"]))
+        else:
+            plan += [(key, value, ["--repo", r]) for r in mods + [build_logic]]
+    for key, value, target in plan:
+        print(f"{'(dry run) ' if args.dry_run else ''}gh secret set {key} {' '.join(target)}")
+        if not args.dry_run:
+            subprocess.run(["gh", "secret", "set", key, *target], input=value, text=True, check=True)
     return 0
 
 
@@ -218,16 +225,19 @@ def cmd_doctor(args) -> int:
 def cmd_token(args) -> int:
     import panzer_token
     raw = os.environ.get("PANZER_SYNC_TOKEN", "")
+    warnings = []
     if not raw.strip():
-        lines, ok = ["PANZER_SYNC_TOKEN is not set (environment, .env, or the repository secret in CI)."], False
+        lines, ok = ["PANZER_SYNC_TOKEN is not set (environment, .env, or the repository secret in CI).", "",
+                     "Result: the token is NOT ready (see .env.example)."], False
     else:
-        repos = sorted({m.repo for m in registry()})
-        lines, ok = panzer_token.check(raw, repos)
-    lines.append("")
-    lines.append("Result: the token can do everything the Mods workflow needs." if ok else
-                 "Result: the token is NOT ready; fix the problems above (see .env.example).")
+        keys = [k.strip() for k in args.select.split(",") if k.strip()]
+        repos = sorted({m.repo for m in registry() if args.select in ("", "all") or m.key in keys})
+        lines, ok, warnings = panzer_token.check(raw, repos)
     report = "\n".join(lines)
     print(report)
+    if os.environ.get("GITHUB_ACTIONS"):
+        for w in warnings:
+            print(f"::warning::{w}")
     if args.summary:
         with open(args.summary, "a", encoding="utf-8") as f:
             f.write("## PANZER_SYNC_TOKEN\n\n" + report + "\n")
@@ -288,6 +298,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("doctor", help="check the local setup")
     s = sub.add_parser("token-check", help="check PANZER_SYNC_TOKEN against every mod repository")
     s.add_argument("--summary", help="also append the report to this file (GitHub step summary)")
+    s.add_argument("--select", default="all", help="comma-separated keys from mods.toml, or all")
     sub.add_parser("publish", help="release publisher (see publishing/README.md)", add_help=False)
     s = sub.add_parser("ci", help="CI helpers")
     s.add_argument("ci_command", choices=["plan", "verify-jars"])
