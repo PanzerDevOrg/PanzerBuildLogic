@@ -190,3 +190,69 @@ def table(mods: list[Mod]) -> list[Row]:
             states[mod.name] = state
         rows.append(Row(m["version"], m["minecraft"], m["neoforge"], m["java"], neoforge_cached(m["neoforge"]), states))
     return rows
+
+
+# --------------------------------------------------------------------------- NeoForge releases
+
+NEOFORGE_METADATA = "https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml"
+
+
+def minecraft_of(neoforge: str) -> str:
+    """NeoForge's numbering: 21.4.x is Minecraft 1.21.4 (21.0.x: 1.21), 26.1.0.x is 26.1, 26.1.1.x is 26.1.1."""
+    nums = [int(n) for n in re.findall(r"\d+", neoforge.split("-")[0])] + [0, 0]
+    if nums[0] >= 26:
+        return f"{nums[0]}.{nums[1]}" + (f".{nums[2]}" if nums[2] else "")
+    return f"1.{nums[0]}" + (f".{nums[1]}" if nums[1] else "")
+
+
+def _order(version: str) -> tuple:
+    base, _, suffix = version.partition("-")
+    return tuple(int(n) for n in re.findall(r"\d+", base)), suffix == "", suffix
+
+
+def _mc_order(minecraft: str) -> tuple:
+    return tuple(int(n) for n in minecraft.split("."))
+
+
+@dataclasses.dataclass
+class Release:
+    minecraft: str
+    latest: str
+    stable: str | None
+    count: int
+
+
+def neoforge_releases(metadata_xml: str) -> list[Release]:
+    """Per Minecraft version (oldest first): the newest NeoForge build and the newest non-beta one."""
+    groups: dict[str, list[str]] = {}
+    for version in re.findall(r"<version>([^<]+)</version>", metadata_xml):
+        groups.setdefault(minecraft_of(version), []).append(version)
+    releases = []
+    for mc in sorted(groups, key=_mc_order):
+        versions = sorted(groups[mc], key=_order)
+        stable = [v for v in versions if "-" not in v]
+        releases.append(Release(mc, versions[-1], stable[-1] if stable else None, len(versions)))
+    return releases
+
+
+def fetch_neoforge_metadata(url: str = NEOFORGE_METADATA) -> str:
+    import urllib.request
+    try:
+        with urllib.request.urlopen(url, timeout=30) as response:
+            return response.read().decode("utf-8")
+    except OSError as e:
+        raise PanzerError(f"cannot read {url}: {e}") from e
+
+
+def neoforge_table(since: str | None = None, metadata_xml: str | None = None) -> list[str]:
+    """`panzer versions neoforge`: one line per Minecraft version from `since` (default 1.21) on."""
+    in_matrix = {row["minecraft"]: row["neoforge"] for row in matrix()}
+    floor = _mc_order(since or "1.21")
+    lines = [f"{'minecraft':10} {'builds':>6}  {'newest':22} {'newest stable':16} matrix"]
+    for r in neoforge_releases(metadata_xml if metadata_xml is not None else fetch_neoforge_metadata()):
+        if _mc_order(r.minecraft) < floor:
+            continue
+        used = in_matrix.get(r.minecraft)
+        note = "" if used is None else used + ("" if used in (r.latest, r.stable) else " (newer available)")
+        lines.append(f"{r.minecraft:10} {r.count:>6}  {r.latest:22} {r.stable or '-':16} {note}".rstrip())
+    return lines

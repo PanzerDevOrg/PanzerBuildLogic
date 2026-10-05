@@ -17,6 +17,7 @@
   panzer versions all              back to every version (and the committed active version)
   panzer versions prefetch         download and decompile every version once, for all mods
   panzer versions status|clean     local cache size; remove NeoForge versions no mod uses
+  panzer versions neoforge [1.21]  NeoForge builds published per Minecraft version (to bump the matrix)
   panzer ci plan|verify-jars ...   used by .github/workflows/mod-ci.yml
 
 MOD is a path to a mod checkout or a key from mods.toml (celeris, tessera, ...).
@@ -268,9 +269,12 @@ def cmd_token(args) -> int:
 
 def cmd_versions(args) -> int:
     import panzer_versions as pv
-    mods = [load_mod(p) for p in resolve_mods(args.mod or [], not args.mod)]
     values = [v.strip() for item in args.values for v in item.split(",") if v.strip()]
     action = args.action
+    if action == "neoforge":
+        print("\n".join(pv.neoforge_table(values[0] if values else None)))
+        return 0
+    mods = [load_mod(p) for p in resolve_mods(args.mod or [], not args.mod)]
     if action == "list":
         names = [m.name for m in mods]
         print(f"{'version':9} {'minecraft':10} {'neoforge':16} {'java':5} {'downloaded':11}" + "".join(f"{n:10}" for n in names))
@@ -374,8 +378,9 @@ def main(argv: list[str] | None = None) -> int:
                    help="fail only if the token works for no selected repository (CI pre-check)")
     sub.add_parser("publish", help="release publisher (see publishing/README.md)", add_help=False)
     s = sub.add_parser("versions", help="Minecraft versions and their local cache")
-    s.add_argument("action", nargs="?", default="list", choices=["list", "use", "all", "prefetch", "status", "clean"])
-    s.add_argument("values", nargs="*", help="versions (use, prefetch)")
+    s.add_argument("action", nargs="?", default="list",
+                   choices=["list", "use", "all", "prefetch", "status", "clean", "neoforge"])
+    s.add_argument("values", nargs="*", help="versions (use, prefetch; neoforge: oldest Minecraft to list, default 1.21)")
     s.add_argument("--mod", action="append", help="mod path or key (repeatable; default every local checkout)")
     s.add_argument("--no-switch", action="store_true", help="use: keep Stonecutter's active version")
     s.add_argument("--keep-active", action="store_true", help="all: do not reset Stonecutter's active version")

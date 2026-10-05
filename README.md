@@ -233,6 +233,7 @@ overridden in the mod's block, at the cost of its own download.
 | `panzer versions` | the matrix: per mod `builds`, `excluded`, `local`/`skipped`, and whether NeoForge is downloaded |
 | `panzer versions prefetch [26.1]` | downloads and decompiles each version once (through the first mod that builds it) |
 | `panzer versions status` / `clean [--yes]` | cache sizes; removes NeoForge builds the matrix no longer uses |
+| `panzer versions neoforge [1.21]` | NeoForge builds published per Minecraft version (newest, newest stable), next to the matrix's; to add or bump a version |
 
 The version Stonecutter has active is always configured, even outside the subset.
 CI ignores `.panzer/versions`.
@@ -253,6 +254,7 @@ sources, adds NeoForge's own sources jar, and prints the answers in its log:
 | `find <regex>` | source paths matching |
 | `sig <class>` | `javap -p` of the compiled class |
 | `file <path>` | any file in the game jars: shaders, JSON, lang files |
+| `neoforge [<minecraft>]` | same as `panzer versions neoforge`, from the runner (for networks without NeoForge's maven) |
 
 Queries go one per line (or separated by `;;`). The workflow lives in a private
 repository because its log is decompiled game code.

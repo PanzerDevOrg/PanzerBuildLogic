@@ -11,6 +11,7 @@ Queries, one per line (or separated by ';;'):
   find   <regex>               source paths matching the regex
   sig    <fqn>                 javap -p of the compiled class (members and descriptors)
   file   <path>                any file from the sources or binary jars (shaders, JSON...)
+  neoforge [<minecraft>]       NeoForge builds published per Minecraft version (panzer versions neoforge)
 """
 from __future__ import annotations
 
@@ -129,6 +130,9 @@ def main() -> int:
             elif kind == "sig":
                 out = subprocess.run(["javap", "-p", "-cp", ":".join(args.binary), rest], capture_output=True, text=True)
                 print(out.stdout or out.stderr)
+            elif kind == "neoforge":
+                import panzer_versions
+                print("\n".join(panzer_versions.neoforge_table(rest or None)))
             else:
                 print(f"(unknown query kind '{kind}')")
         except Exception as e:  # noqa: BLE001 - one bad query must not hide the others

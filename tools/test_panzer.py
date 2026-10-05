@@ -285,6 +285,20 @@ class Versions(unittest.TestCase):
         self.assertEqual(block["minecraft_version_range"], "[1.21.10,1.21.11)")
         self.assertEqual(block["neo_version"], panzer_versions.matrix()[1]["neoforge"])
 
+    def test_neoforge_releases(self):
+        self.assertEqual([panzer_versions.minecraft_of(v) for v in
+                          ("21.0.167", "21.1.248", "21.10.64", "26.1.0.19-beta", "26.1.1.3", "26.2.0.1-beta")],
+                         ["1.21", "1.21.1", "1.21.10", "26.1", "26.1.1", "26.2"])
+        xml = "".join(f"<version>{v}</version>" for v in
+                      ("21.1.9", "21.1.10", "21.10.1-beta", "21.10.64", "26.1.0.2-beta", "26.1.0.19-beta", "21.2.1-beta"))
+        rows = {r.minecraft: (r.latest, r.stable, r.count) for r in panzer_versions.neoforge_releases(xml)}
+        self.assertEqual(rows, {"1.21.1": ("21.1.10", "21.1.10", 2), "1.21.2": ("21.2.1-beta", None, 1),
+                                "1.21.10": ("21.10.64", "21.10.64", 2), "26.1": ("26.1.0.19-beta", None, 2)})
+        self.assertEqual([r.minecraft for r in panzer_versions.neoforge_releases(xml)],
+                         ["1.21.1", "1.21.2", "1.21.10", "26.1"])
+        table = panzer_versions.neoforge_table("1.21.2", xml)
+        self.assertEqual([line.split()[0] for line in table], ["minecraft", "1.21.2", "1.21.10", "26.1"])
+
     def test_matrix_java(self):
         java = {row["version"]: row["java"] for row in panzer_versions.matrix()}
         self.assertEqual((java["1.21.1"], java["26.1"]), (21, 25))
