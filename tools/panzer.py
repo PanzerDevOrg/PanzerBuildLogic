@@ -12,6 +12,11 @@
   panzer publish ...               the release publisher (publishing/panzer_publish.py)
   panzer doctor                    check tools, tokens and checkouts
   panzer token-check               can PANZER_SYNC_TOKEN read, push and tag every mod?
+  panzer versions [list]           Minecraft versions, what each mod builds, what is downloaded
+  panzer versions use 1.21.10      work on some versions only (the rest is never configured or downloaded)
+  panzer versions all              back to every version (and the committed active version)
+  panzer versions prefetch         download and decompile every version once, for all mods
+  panzer versions status|clean     local cache size; remove NeoForge versions no mod uses
   panzer ci plan|verify-jars ...   used by .github/workflows/mod-ci.yml
 
 MOD is a path to a mod checkout or a key from mods.toml (celeris, tessera, ...).
@@ -261,10 +266,58 @@ def cmd_token(args) -> int:
     return 0 if result.ok else 1
 
 
+def cmd_versions(args) -> int:
+    import panzer_versions as pv
+    mods = [load_mod(p) for p in resolve_mods(args.mod or [], not args.mod)]
+    values = [v.strip() for item in args.values for v in item.split(",") if v.strip()]
+    action = args.action
+    if action == "list":
+        names = [m.name for m in mods]
+        print(f"{'version':9} {'minecraft':10} {'neoforge':16} {'java':5} {'downloaded':11}" + "".join(f"{n:10}" for n in names))
+        for row in pv.table(mods):
+            print(f"{row.version:9} {row.minecraft:10} {row.neoforge:16} {row.java:<5} {'yes' if row.cached else 'no':11}"
+                  + "".join(f"{row.mods[n]:10}" for n in names))
+        print("\nbuilds: CI and local builds; excluded: not ported yet (-Pstonecutter.versions=<v> still builds it);")
+        print("local/skipped: this checkout works on a subset (panzer versions use), the rest is not configured.")
+        return 0
+    if action == "use":
+        if not values:
+            raise PanzerError("which versions? e.g. `panzer versions use 1.21.10`")
+        for mod in mods:
+            print(pv.use(mod, values, switch=not args.no_switch))
+        return 0
+    if action == "all":
+        for mod in mods:
+            print(pv.use_all(mod, reset=not args.keep_active))
+        return 0
+    if action == "prefetch":
+        for line in pv.prefetch(mods, values or None):
+            print(line)
+        return 0
+    if action in ("status", "clean"):
+        home = pv.gradle_home() / "caches"
+        for name in ("neoformruntime", "modules-2"):
+            path = home / name
+            print(f"{path}: {pv.human(pv.dir_size(path)) if path.is_dir() else 'absent'}")
+        cached = pv.cached_neoforge_versions()
+        print(f"NeoForge versions downloaded: {', '.join(cached) or 'none'}")
+        stale = pv.stale_neoforge()
+        if action == "status":
+            print(f"Not used by the version matrix: {', '.join(stale) or 'none'}"
+                  + (" (panzer versions clean --yes removes them)" if stale else ""))
+            return 0
+        for line in pv.clean(stale, dry_run=not args.yes) or ["nothing to remove"]:
+            print(line)
+        if stale and not args.yes:
+            print("Dry run: add --yes to remove them.")
+        return 0
+    raise PanzerError(f"unknown action {action}")
+
+
 def cmd_ci(args) -> int:
     mod = load_mod(Path(args.mod))
     if args.ci_command == "plan":
-        result = panzer_ci.plan(mod)
+        result = panzer_ci.plan(mod, args.versions)
         out = os.environ.get("GITHUB_OUTPUT")
         if args.github_output and out:
             with open(out, "a", encoding="utf-8") as f:
@@ -320,19 +373,28 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--gate", action="store_true",
                    help="fail only if the token works for no selected repository (CI pre-check)")
     sub.add_parser("publish", help="release publisher (see publishing/README.md)", add_help=False)
+    s = sub.add_parser("versions", help="Minecraft versions and their local cache")
+    s.add_argument("action", nargs="?", default="list", choices=["list", "use", "all", "prefetch", "status", "clean"])
+    s.add_argument("values", nargs="*", help="versions (use, prefetch)")
+    s.add_argument("--mod", action="append", help="mod path or key (repeatable; default every local checkout)")
+    s.add_argument("--no-switch", action="store_true", help="use: keep Stonecutter's active version")
+    s.add_argument("--keep-active", action="store_true", help="all: do not reset Stonecutter's active version")
+    s.add_argument("--yes", action="store_true", help="clean: really remove")
     s = sub.add_parser("ci", help="CI helpers")
     s.add_argument("ci_command", choices=["plan", "verify-jars"])
     s.add_argument("--mod", default=".")
     s.add_argument("--github-output", action="store_true")
     s.add_argument("--libs")
     s.add_argument("--strict", action="store_true")
+    s.add_argument("--versions", default="", help="plan: build only these versions (may be excluded ones)")
     args = p.parse_args(argv)
 
     try:
         if args.command in ("sync", "check"):
             return cmd_sync(args, write=args.command == "sync")
         return {"mods": cmd_mods, "new": cmd_new, "release": cmd_release, "secrets": cmd_secrets,
-                "doctor": cmd_doctor, "token-check": cmd_token, "ci": cmd_ci}[args.command](args)
+                "doctor": cmd_doctor, "token-check": cmd_token, "versions": cmd_versions,
+                "ci": cmd_ci}[args.command](args)
     except PanzerError as e:
         # 2, not 1: `check` uses 1 for "files differ", and CI tells them apart.
         print(f"error: {e}", file=sys.stderr)

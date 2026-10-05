@@ -39,6 +39,10 @@ on:
       build-logic-ref:
         type: string
         default: master
+      versions:
+        description: Build only these Minecraft versions (comma-separated; may name ones the mod excludes, to try a port)
+        type: string
+        default: ""
 
 env:
   PANZER: panzer-build-logic/tools/panzer.py
@@ -58,6 +62,8 @@ jobs:
       jars-artifact: ${{ steps.plan.outputs.jars-artifact }}
       maven-pages: ${{ steps.plan.outputs.maven-pages }}
       publish: ${{ steps.publish.outputs.publish }}
+      gradle-versions: ${{ steps.plan.outputs.gradle-versions }}
+      cache-key: ${{ steps.plan.outputs.cache-key }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -75,7 +81,9 @@ jobs:
 
       - name: Plan from mod.stonecutter.properties.toml
         id: plan
-        run: python3 "$PANZER" ci plan --mod mod --github-output
+        env:
+          VERSIONS: ${{ inputs.versions }}
+        run: python3 "$PANZER" ci plan --mod mod --github-output --versions "$VERSIONS"
 
       # Publishing happens only for a v* tag of the mod's own repository, and
       # never when a manual run keeps dry_run ticked.
@@ -84,9 +92,10 @@ jobs:
         env:
           DRY_RUN: ${{ inputs.dry-run }}
           FROM_BUILD_LOGIC: ${{ inputs.mod-repository }}
+          VERSIONS: ${{ inputs.versions }}
         run: |
           publish=false
-          if [[ "$GITHUB_REF" == refs/tags/v* && "$DRY_RUN" != "true" && -z "$FROM_BUILD_LOGIC" ]]; then publish=true; fi
+          if [[ "$GITHUB_REF" == refs/tags/v* && "$DRY_RUN" != "true" && -z "$FROM_BUILD_LOGIC" && -z "$VERSIONS" ]]; then publish=true; fi
           echo "publish=$publish" >> "$GITHUB_OUTPUT"
           echo "Publish: $publish (ref $GITHUB_REF)"
 
@@ -201,6 +210,18 @@ jobs:
           JAVAS: ${{ needs.plan.outputs.java }}
         run: echo "GRADLE_JDKS=-Porg.gradle.java.installations.fromEnv=$(printf '%s\n' $JAVAS | sed 's/.*/JAVA_HOME_&_X64/' | paste -sd, -)" >> "$GITHUB_ENV"
 
+      # Minecraft/NeoForge per version (ModDevGradle's neoformruntime cache),
+      # dependencies and the Gradle distribution, kept between runs: only a
+      # change of versions or plugins downloads them again.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches/modules-2
+            ~/.gradle/caches/neoformruntime
+            ~/.gradle/wrapper/dists
+          key: gradle-${{ runner.os }}-${{ needs.plan.outputs.cache-key }}
+          restore-keys: gradle-${{ runner.os }}-
+
       # [depends_on.<id>] ci_build_from_source: that mod's default branch,
       # published to mavenLocal (which the build resolves first), for
       # dependencies whose version is not released yet. The token only exists
@@ -247,9 +268,10 @@ jobs:
         env:
           TASKS: ${{ needs.plan.outputs.gradle-tasks }}
           STRICT: ${{ needs.plan.outputs.strict-natives }}
+          VERSIONS: ${{ needs.plan.outputs.gradle-versions }}
         run: |
           chmod +x ./gradlew
-          ./gradlew $TASKS -Ppanzer.native.strict=$STRICT $GRADLE_JDKS --no-watch-fs --stacktrace
+          ./gradlew $TASKS -Ppanzer.native.strict=$STRICT $VERSIONS $GRADLE_JDKS --no-watch-fs --stacktrace
 
       # Universal jar: every declared native and the legal files; per-system
       # jars: only their OS's natives (java: none); sources jar present.
@@ -291,6 +313,18 @@ jobs:
         env:
           JAVAS: ${{ needs.plan.outputs.java }}
         run: echo "GRADLE_JDKS=-Porg.gradle.java.installations.fromEnv=$(printf '%s\n' $JAVAS | sed 's/.*/JAVA_HOME_&_X64/' | paste -sd, -)" >> "$GITHUB_ENV"
+
+      # Minecraft/NeoForge per version (ModDevGradle's neoformruntime cache),
+      # dependencies and the Gradle distribution, kept between runs: only a
+      # change of versions or plugins downloads them again.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches/modules-2
+            ~/.gradle/caches/neoformruntime
+            ~/.gradle/wrapper/dists
+          key: gradle-${{ runner.os }}-${{ needs.plan.outputs.cache-key }}
+          restore-keys: gradle-${{ runner.os }}-
       - name: Download native builds
         if: needs.plan.outputs.has-natives == 'true'
         uses: actions/download-artifact@v5

@@ -123,12 +123,31 @@ def java_for(minecraft: str) -> int:
     return 21
 
 
-def load_config(root: Path) -> ModConfig:
+def read_mod_toml(root: Path) -> tuple[dict, list[str]]:
+    """The mod's configuration merged with panzer-build-logic's common TOML (the
+    same merge the build does) and the Minecraft builds it declares."""
     toml_path = root / "mod.stonecutter.properties.toml"
     if not toml_path.exists():
         raise PublishError(f"{toml_path} not found")
-    with toml_path.open("rb") as f:
-        data = tomllib.load(f)
+    tools = Path(__file__).resolve().parent.parent / "tools"
+    if str(tools) not in sys.path:
+        sys.path.insert(0, str(tools))
+    try:
+        import panzer_mod
+    except ImportError:  # publisher used on its own: no common TOML to merge
+        with toml_path.open("rb") as f:
+            data = tomllib.load(f)
+        return data, list((data.get("stonecutter") or {}).get("versions", []))
+    try:
+        mod = panzer_mod.load_mod(root)
+    except panzer_mod.PanzerError as e:
+        raise PublishError(str(e)) from e
+    return mod.config, mod.stonecutter_versions
+
+
+def load_config(root: Path) -> ModConfig:
+    toml_path = root / "mod.stonecutter.properties.toml"
+    data, versions = read_mod_toml(root)
     mod = data.get("mod") or {}
     publish = data.get("publish") or {}
     for key in ("id", "name", "version"):
@@ -165,7 +184,7 @@ def load_config(root: Path) -> ModConfig:
         dependencies.append(Dependency(dep_id, dtype, dep.get("modrinth"), dep.get("curseforge"), dep.get("github")))
 
     builds = []
-    for build in (data.get("stonecutter") or {}).get("versions", []):
+    for build in versions:
         block = data.get(build) or {}
         gv = list(block.get("game_versions") or [block.get("minecraft_version", build)])
         lower = str(block.get("minecraft_version_range", "")).strip("[(").split(",")[0]

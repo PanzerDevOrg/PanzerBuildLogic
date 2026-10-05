@@ -11,6 +11,7 @@ from pathlib import Path
 import panzer
 import panzer_ci
 import panzer_sync
+import panzer_versions
 from panzer_legal import Legal
 from panzer_mod import BUILD_LOGIC, PanzerError, load_mod, merge_tables, parse_dotenv
 
@@ -92,6 +93,18 @@ class Merge(unittest.TestCase):
         merged = merge_tables(common, mod)
         self.assertEqual(merged["legal"], {"holder": "P", "code": "X", "third_party": {"components": ["zstd"]}})
         self.assertEqual(merged["plugins"], {"b": "2"})
+
+
+    def test_version_blocks_merge_key_by_key(self):
+        common = {"1.21.1": {"minecraft_version": "1.21.1", "neo_version": "21.1.248"},
+                  "plugins": {"a": "1"}}
+        mod = {"1.21.1": {"neo_version_range": "[21.1,21.2)", "neo_version": "21.1.300"}}
+        merged = merge_tables(common, mod)
+        self.assertEqual(merged["1.21.1"], {"minecraft_version": "1.21.1", "neo_version": "21.1.300",
+                                            "neo_version_range": "[21.1,21.2)"})
+        # nested tables named like a version still replace whole
+        nested = merge_tables({"o": {"1.0": {"a": 1, "b": 2}}}, {"o": {"1.0": {"a": 3}}})
+        self.assertEqual(nested["o"]["1.0"], {"a": 3})
 
 
 class Sync(unittest.TestCase):
@@ -218,6 +231,126 @@ class Selection(unittest.TestCase):
 
     def test_private_flag(self):
         self.assertTrue(next(m for m in panzer.select_mods("velox")).private)
+
+
+PROFILE_TOML = textwrap.dedent('''
+    [mod]
+    id = "prof"
+    version = "1.0.0"
+
+    [stonecutter]
+    profile = "panzer"
+    exclude_versions = ["1.21.11", "26.1"]
+    vcs_version = "1.21.1"
+
+    ["1.21.10"]
+    minecraft_version_range = "[1.21.10,1.21.11)"
+''')
+
+
+class Versions(unittest.TestCase):
+    """The shared version matrix and per-checkout subsets (panzer versions, ci plan --versions)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        tmp = Path(self.tmp.name)
+        self.root = tmp / "Prof"
+        self.root.mkdir()
+        (self.root / "mod.stonecutter.properties.toml").write_text(PROFILE_TOML)
+        (self.root / "stonecutter.gradle.kts").write_text('stonecutter active "1.21.1"\n')
+        self.mod = load_mod(self.root)
+        self.home = tmp / "gradle-home"
+        self.old_home = os.environ.get("GRADLE_USER_HOME")
+        os.environ["GRADLE_USER_HOME"] = str(self.home)
+
+    def tearDown(self):
+        if self.old_home is None:
+            os.environ.pop("GRADLE_USER_HOME", None)
+        else:
+            os.environ["GRADLE_USER_HOME"] = self.old_home
+        self.tmp.cleanup()
+
+    def neoforge_dir(self, version: str) -> Path:
+        path = self.home / "caches/modules-2/files-2.1/net.neoforged/neoforge" / version
+        path.mkdir(parents=True)
+        (path / "x.jar").write_bytes(b"0" * 2048)
+        return path
+
+    def test_profile_and_excludes(self):
+        profile = [row["version"] for row in panzer_versions.matrix()]
+        self.assertEqual(self.mod.available_versions, profile)
+        self.assertEqual(self.mod.stonecutter_versions, [v for v in profile if v not in ("1.21.11", "26.1")])
+        # the mod's block adds its claim, the common block keeps the builds
+        block = self.mod.config["1.21.10"]
+        self.assertEqual(block["minecraft_version_range"], "[1.21.10,1.21.11)")
+        self.assertEqual(block["neo_version"], panzer_versions.matrix()[1]["neoforge"])
+
+    def test_matrix_java(self):
+        java = {row["version"]: row["java"] for row in panzer_versions.matrix()}
+        self.assertEqual((java["1.21.1"], java["26.1"]), (21, 25))
+
+    def test_table_states(self):
+        rows = {r.version: r.mods["prof"] for r in panzer_versions.table([self.mod])}
+        self.assertEqual(rows, {"1.21.1": "builds", "1.21.10": "builds", "1.21.11": "excluded", "26.1": "excluded"})
+        panzer_versions.use(self.mod, ["1.21.10", "26.1"], switch=False)
+        self.assertEqual(panzer_versions.local_subset(self.mod), ["1.21.10", "26.1"])
+        rows = {r.version: r.mods["prof"] for r in panzer_versions.table([self.mod])}
+        # the active version is always configured, so it counts as local
+        self.assertEqual(rows, {"1.21.1": "local", "1.21.10": "local", "1.21.11": "skipped", "26.1": "local"})
+        panzer_versions.use_all(self.mod, reset=False)
+        self.assertIsNone(panzer_versions.local_subset(self.mod))
+
+    def test_local_subset_file_format(self):
+        (self.root / ".panzer").mkdir()
+        (self.root / ".panzer/versions").write_text("# work on these\n1.21.10, 26.1\n\n1.21.11 # also\n")
+        self.assertEqual(panzer_versions.local_subset(self.mod), ["1.21.10", "26.1", "1.21.11"])
+        (self.root / ".panzer/versions").write_text("# nothing\n")
+        self.assertIsNone(panzer_versions.local_subset(self.mod))
+
+    def test_use_rejects_unknown_versions(self):
+        with self.assertRaises(PanzerError):
+            panzer_versions.use(self.mod, ["1.20.1"], switch=False)
+        self.assertFalse((self.root / ".panzer/versions").exists())
+
+    def test_cache_detection_and_clean(self):
+        used = panzer_versions.matrix()[0]["neoforge"]
+        self.neoforge_dir(used)
+        stale = self.neoforge_dir("21.1.1")
+        self.assertTrue(panzer_versions.neoforge_cached(used))
+        self.assertEqual(panzer_versions.stale_neoforge(), ["21.1.1"])
+        report = panzer_versions.clean(["21.1.1"], dry_run=True)
+        self.assertIn("would remove NeoForge 21.1.1 (2.0 KB)", report)
+        self.assertTrue(stale.is_dir())
+        panzer_versions.clean(["21.1.1"], dry_run=False)
+        self.assertFalse(stale.exists())
+        self.assertEqual(panzer_versions.cached_neoforge_versions(), [used])
+
+    def test_ci_plan_default(self):
+        plan = panzer_ci.plan(self.mod)
+        self.assertEqual(plan["versions"], "1.21.1,1.21.10")
+        self.assertEqual(plan["gradle-versions"], "")
+        self.assertEqual(plan["java"], "21")
+
+    def test_ci_plan_requested_versions(self):
+        plan = panzer_ci.plan(self.mod, " 26.1 ")
+        # the committed active version is always configured by Stonecutter
+        self.assertEqual(plan["versions"], "1.21.1,26.1")
+        self.assertEqual(plan["gradle-versions"], "-Pstonecutter.versions=26.1")
+        self.assertEqual(plan["java"], "25\n21")
+        with self.assertRaises(PanzerError):
+            panzer_ci.plan(self.mod, "1.20.1")
+
+    def test_ci_cache_key(self):
+        a = panzer_ci.cache_key(self.mod, ["1.21.1", "26.1"])
+        self.assertEqual(a, panzer_ci.cache_key(self.mod, ["26.1", "1.21.1"]))
+        self.assertNotEqual(a, panzer_ci.cache_key(self.mod, ["1.21.1"]))
+        (self.root / "gradle/wrapper").mkdir(parents=True)
+        (self.root / "gradle/wrapper/gradle-wrapper.properties").write_text("distributionUrl=x\n")
+        self.assertNotEqual(a, panzer_ci.cache_key(self.mod, ["1.21.1", "26.1"]))
+
+    def test_cli_list(self):
+        self.assertEqual(panzer.main(["versions", "list", "--mod", str(self.root)]), 0)
+        self.assertEqual(panzer.main(["versions", "use", "--mod", str(self.root)]), 2)
 
 
 class New(unittest.TestCase):

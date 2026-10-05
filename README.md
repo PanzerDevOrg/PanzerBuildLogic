@@ -63,6 +63,7 @@ from anywhere: `./panzer` on Linux/macOS, `panzer` (panzer.cmd) on Windows.
 | `panzer publish ...` | the release publisher, see [`publishing/README.md`](publishing/README.md) |
 | `panzer doctor` | checks Python, git/gh/java, tokens and mod checkouts |
 | `panzer token-check` | checks `PANZER_SYNC_TOKEN` against every mod: valid, expiry, repositories visible, fetch and push allowed (changes nothing) |
+| `panzer versions [list\|use\|all\|prefetch\|status\|clean]` | the Minecraft version matrix, what each mod builds and what is downloaded; work on some versions only; download every version once for all mods (see [Minecraft versions](#minecraft-versions)) |
 
 `MOD` is a path or a key of `mods.toml`. Mod checkouts are looked up next to this
 repository (`../Celeris`, `../Tessera`, `../velox`), or under `PANZER_MODS_DIR`.
@@ -175,28 +176,66 @@ Each mod's `.github/workflows/ci.yml` calls `mod-ci.yml`, which reads the mod's 
 | maven | `[publish] maven_pages = true`, on tags: the mod's Maven repository on gh-pages |
 | release | `mod-release.yml`: dry run with a `release-preview` artifact on every push, publishing on `v*` tags |
 
+The build and maven jobs cache `~/.gradle/caches/modules-2`, `neoformruntime` and the
+Gradle distribution, keyed by the versions built, their NeoForge builds, `[plugins]` and
+the wrapper: Minecraft and NeoForge are downloaded and decompiled once per key, not on
+every run.
+
 `.github/workflows/mods.yml` runs the same for any mod from this repository's Actions
 tab (*action: build*, never publishing), syncs or checks the shared files, or tags
-releases (*action: release*).
+releases (*action: release*). Its *versions* input builds only those versions, excluded
+ones included (`1.21.11,26.1`): that is how a port is tried in CI before the mod claims
+the version; such a run never publishes.
 
-## `[stonecutter]`: choosing which Minecraft versions to build
+## Minecraft versions
+
+Every mod builds from one version matrix, in `common.stonecutter.properties.toml`:
+the Minecraft and NeoForge builds (and Parchment) for each version, and the `panzer`
+profile listing them. All mods compile against the same builds, so each version is
+downloaded and decompiled once per machine (and per CI cache key), whatever the
+number of mods.
+
+| Version | NeoForge | Java | Celeris claims |
+|---|---|---|---|
+| `1.21.1` | 21.1 | 21 | 1.21 - 1.21.6 |
+| `1.21.10` | 21.10 | 21 | 1.21.7 - 1.21.10 |
+| `1.21.11` | 21.11 | 21 | 1.21.11 |
+| `26.1` | 26.1 | 25 | 26.1 - 26.3 |
+
+Each mod claims its own ranges: what its code was verified against on that build.
+
+A mod picks the profile and says what it claims for each version in its own
+`["<version>"]` block, which merges into the common one key by key:
 
 ```toml
 [stonecutter]
-versions = ["1.21.1", "1.21.4"]   # explicit list -- always wins if present
-vcs_version = "1.21.1"
-branches = ["example"]            # optional: extra projects built for every version
+profile = "panzer"
+exclude_versions = ["26.1"]          # not ported yet: not built by default
+vcs_version = "1.21.1"               # the version the committed sources are written for
+
+["1.21.10"]
+minecraft_version_range = "[1.21.7,1.21.11)"
+neo_version_range = "[21.7,21.11)"
+game_versions = ["1.21.7", "1.21.8", "1.21.9", "1.21.10"]   # what the jar is published for
 ```
 
-```toml
-[stonecutter]
-profile = "legacy"                 # named list from [stonecutter.profiles.legacy]
-extra_versions = ["26.1"]          # optional: add versions on top of the profile
-exclude_versions = ["1.21.4"]      # optional: remove versions from the profile
-```
+`versions = [...]` (an explicit list) always wins over a profile, and
+`extra_versions` adds versions on top of it. Any common key (`neo_version`, ...) can be
+overridden in the mod's block, at the cost of its own download.
 
-Profiles are defined once in `common.stonecutter.properties.toml`. On top of either
-form, `-Pstonecutter.versions=1.21.1,26.1` narrows the list for a single run.
+### Working on a few versions
+
+| | |
+|---|---|
+| `./gradlew build -Pstonecutter.versions=1.21.10` | one run, may name an excluded version |
+| `panzer versions use 1.21.10 [--mod velox]` | this checkout: switches Stonecutter to 1.21.10 and writes `.panzer/versions` (git-ignored); Gradle and the IDE then configure, download and build only that |
+| `panzer versions all` | every version again, active version back to `vcs_version` |
+| `panzer versions` | the matrix: per mod `builds`, `excluded`, `local`/`skipped`, and whether NeoForge is downloaded |
+| `panzer versions prefetch [26.1]` | downloads and decompiles each version once (through the first mod that builds it) |
+| `panzer versions status` / `clean [--yes]` | cache sizes; removes NeoForge builds the matrix no longer uses |
+
+The version Stonecutter has active is always configured, even outside the subset.
+CI ignores `.panzer/versions`.
 
 ## Per-mod version overrides
 
@@ -209,7 +248,8 @@ neo_version_range = "[21.1,21.2)"
 ```
 
 Only those fields are overridden for `tessera` on `1.21.1`; everything else is
-inherited from the base `["1.21.1"]` block.
+inherited from the base `["1.21.1"]` block. Setting the key in the mod's own
+`["1.21.1"]` block does the same.
 
 ## Optional JVM modules
 

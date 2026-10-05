@@ -57,9 +57,12 @@ class PanzerSettingsPlugin : Plugin<Settings> {
 
         val stonecutterTable = TomlBlockReader.find(tables, "stonecutter")
             ?: error("[panzer.settings] [stonecutter] is missing in stonecutter.properties.toml.")
-        val scVersions = resolveVersions(settings, tables, stonecutterTable)
-        val vcsVersion = stonecutterTable.entries["vcs_version"]
+        val configuredVcs = stonecutterTable.entries["vcs_version"]
             ?: error("[panzer.settings] [stonecutter] must declare 'vcs_version'.")
+        val scVersions = resolveVersions(settings, tables, stonecutterTable)
+        // Stonecutter needs the vcs version registered; when a subset leaves it
+        // out, the active version (always registered) stands in for it.
+        val vcsVersion = if (configuredVcs in scVersions) configuredVcs else activeVersion(settings) ?: scVersions.first()
         val branches = PlatformJars.parseList(stonecutterTable.entries["branches"])
 
         branches.forEach { settings.include(":$it") }
@@ -76,13 +79,29 @@ class PanzerSettingsPlugin : Plugin<Settings> {
         PanzerDiagnostics.validate(rootDir, mergedToml, scVersions).renderAndMaybeFail(rootDir.name)
     }
 
+    /**
+     * The Minecraft versions to register:
+     *
+     * - declared: `[stonecutter] versions`, or the profile's versions plus
+     *   `extra_versions` minus `exclude_versions`;
+     * - narrowed by `-Pstonecutter.versions=a,b` or, outside CI, by the local
+     *   `.panzer/versions` file `panzer versions use` writes. Either may also
+     *   name a profile version the mod excludes (to try a port);
+     * - always including the active Stonecutter version, which Stonecutter
+     *   requires to be registered.
+     */
     private fun resolveVersions(
         settings: Settings,
         tables: List<TomlBlockReader.Table>,
         stonecutter: TomlBlockReader.Table,
     ): List<String> {
         val explicit = PlatformJars.parseList(stonecutter.entries["versions"])
-        val resolved = explicit.ifEmpty {
+        val available: List<String>
+        val declared: List<String>
+        if (explicit.isNotEmpty()) {
+            available = explicit
+            declared = explicit
+        } else {
             val profile = stonecutter.entries["profile"]
                 ?: error("[panzer.settings] [stonecutter] must declare either 'versions' or 'profile'.")
             val profileTable = TomlBlockReader.find(tables, "stonecutter", "profiles", profile)
@@ -90,21 +109,48 @@ class PanzerSettingsPlugin : Plugin<Settings> {
                         "[stonecutter.profiles.$profile] exists in the mod's TOML or the common one.")
             val base = PlatformJars.parseList(profileTable.entries["versions"])
                 .ifEmpty { error("[panzer.settings] [stonecutter.profiles.$profile] has no 'versions' array.") }
-            val extra = PlatformJars.parseList(stonecutter.entries["extra_versions"])
             val exclude = PlatformJars.parseList(stonecutter.entries["exclude_versions"]).toSet()
-            (base + extra).distinct().filterNot { it in exclude }
+            available = (base + PlatformJars.parseList(stonecutter.entries["extra_versions"])).distinct()
+            declared = available.filterNot { it in exclude }
                 .ifEmpty { error("[panzer.settings] profile \"$profile\" is empty after 'exclude_versions'.") }
         }
 
-        val raw = settings.startParameter.projectProperties["stonecutter.versions"] ?: return resolved
+        val cli = settings.startParameter.projectProperties["stonecutter.versions"]
+        val local = if (cli == null && System.getenv("CI") != "true") localSubset(settings) else null
+        val raw = cli ?: local ?: return withActive(settings, declared, available)
         val requested = raw.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-        val unknown = requested.filterNot { it in resolved }
+        val unknown = requested.filterNot { it in available }
         if (unknown.isNotEmpty()) {
-            error("[panzer.settings] -Pstonecutter.versions requested $unknown but only $resolved are available.")
+            val origin = if (cli != null) "-Pstonecutter.versions" else ".panzer/versions"
+            error("[panzer.settings] $origin asks for $unknown, but this mod can build $available.")
         }
-        if (requested.size != resolved.size) {
-            println("[stonecutter] Building subset $requested of $resolved (-Pstonecutter.versions override).")
+        val selected = withActive(settings, available.filter { it in requested }, available)
+        if (selected != declared) {
+            val origin = if (cli != null) "-Pstonecutter.versions" else ".panzer/versions (panzer versions all: every version)"
+            println("[panzer] Building $selected of $declared ($origin).")
         }
-        return requested
+        return selected
+    }
+
+    private fun withActive(settings: Settings, versions: List<String>, available: List<String>): List<String> {
+        val active = activeVersion(settings) ?: return versions
+        if (active in versions || active !in available) return versions
+        println("[panzer] Also registering $active: it is Stonecutter's active version (panzer versions use <v> switches it).")
+        return available.filter { it in versions || it == active }
+    }
+
+    /** `stonecutter active "<v>"` from stonecutter.gradle.kts. */
+    private fun activeVersion(settings: Settings): String? {
+        val script = settings.layout.rootDirectory.file("stonecutter.gradle.kts")
+        val text = settings.providers.fileContents(script).asText.orNull ?: return null
+        return Regex("""^stonecutter active "([^"]+)"""", RegexOption.MULTILINE).find(text)?.groupValues?.get(1)
+    }
+
+    /** `.panzer/versions` (git-ignored): the versions this checkout works on. */
+    private fun localSubset(settings: Settings): String? {
+        val file = settings.layout.rootDirectory.file(".panzer/versions")
+        return settings.providers.fileContents(file).asText.orNull
+            ?.lines()?.map { it.substringBefore('#').trim() }?.filter { it.isNotEmpty() }
+            ?.joinToString(",")?.takeIf { it.isNotEmpty() }
     }
 }

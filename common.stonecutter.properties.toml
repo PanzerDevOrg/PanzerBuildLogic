@@ -24,63 +24,54 @@ loader_version_range = "[4,)"
 version = "10.1.1"
 enabled = true
 
+# Minecraft versions, the same for every mod (one download and decompile per
+# version on each machine and CI cache, whatever the number of mods). A mod's
+# own ["<version>"] block merges into these key by key and declares what that
+# mod claims to support: minecraft_version_range, neo_version_range and
+# game_versions (the versions its jar is published for). It may also override
+# any key here, which costs an extra NeoForge download.
+#
+#   1.21.1  : Java 21, NeoForge 21.1 (1.21 - 1.21.1, older rendering/payload APIs)
+#   1.21.10 : Java 21, NeoForge 21.10
+#   1.21.11 : Java 21, NeoForge 21.11 (ResourceLocation renamed to Identifier)
+#   26.1    : Java 25, NeoForge 26.1 (unobfuscated game jar, no Parchment)
+
 ["1.21.1"]
 minecraft_version = "1.21.1"
-minecraft_version_range = "[1.21,1.21.2)"
 neo_version = "21.1.248"
-neo_version_range = "[21.0,21.2)"
 parchment_mappings_version = "2024.11.17"
 
-["1.21.3"]
-minecraft_version = "1.21.3"
-minecraft_version_range = "[1.21.3,1.21.4)"
-neo_version = "21.3.97"
-neo_version_range = "[21.3,21.4)"
-parchment_mappings_version = "2024.12.07"
+["1.21.10"]
+minecraft_version = "1.21.10"
+neo_version = "21.10.64"
+parchment_mappings_version = "2025.10.12"
 
-["1.21.4"]
-minecraft_version = "1.21.4"
-minecraft_version_range = "[1.21.4,1.21.5)"
-neo_version = "21.4.158"
-neo_version_range = "[21.4,21.5)"
-parchment_mappings_version = "2025.03.23"
+["1.21.11"]
+minecraft_version = "1.21.11"
+neo_version = "21.11.45"
+parchment_mappings_version = "2025.12.20"
+
+["26.1"]
+minecraft_version = "26.1"
+neo_version = "26.1.0.19-beta"
 
 # [overrides.<mod_id>."<mc_version>"] overrides the ["<mc_version>"] block above,
-# field by field, for that mod_id only. No need to declare every field: whatever's
-# missing is inherited from that version's base block. Example:
-#
-# [overrides.mod."1.21.1"]
-# neo_version = "21.1.180"
-# neo_version_range = "[21.1,21.2)"
-#
-# [overrides.mod."1.21.4"]
-# parchment_mappings_version = "2025.02.09"
+# field by field, for that mod_id only (a mod can also just set the key in its
+# own ["<mc_version>"] block).
 
-# Version profiles: reusable named lists, so you don't repeat the same list in
-# every mod.stonecutter.properties.toml. A mod uses them like this, in its own
-# [stonecutter] table, instead of listing "versions" by hand:
+# Version profiles: named lists of versions, so mods don't repeat them. A mod
+# picks one in its [stonecutter] table:
 #
 #   [stonecutter]
-#   profile = "legacy"
-#   extra_versions = ["26.1"]      # optional: adds versions to the profile
-#   exclude_versions = ["1.21.4"]  # optional: removes versions from the profile
+#   profile = "panzer"
+#   exclude_versions = ["26.1"]    # optional: versions it does not build (yet)
+#   extra_versions = ["1.21.5"]    # optional: versions on top of the profile
 #
-# If a mod sets "versions" directly, that always wins and
-# "profile"/"extra_versions"/"exclude_versions" are ignored --
-# 100% backwards-compatible, doesn't break any existing mod.
+# An explicit "versions = [...]" always wins over a profile.
 #
-# The per-version data block (minecraft_version, neo_version, etc.) can live
-# here (shared) or in the mod's own TOML -- a profile only names versions, it
-# doesn't matter where each ["<version>"] block is defined. A mod can also
-# declare its own [stonecutter.profiles.*] if it needs a custom profile that
-# doesn't make sense to share.
-#
-# To quickly test a subset without touching any TOML:
-#   ./gradlew build -Pstonecutter.versions=1.21.1,26.1
-# ---------------------------------------------------------------------------
+# Building a subset for one run, or for this checkout:
+#   ./gradlew build -Pstonecutter.versions=1.21.10    (may name an excluded version)
+#   panzer versions use 1.21.10                       (writes .panzer/versions)
 
-[stonecutter.profiles.legacy]
-versions = ["1.21.1", "1.21.3", "1.21.4"]
-
-[stonecutter.profiles.current]
-versions = ["1.21.1"]
+[stonecutter.profiles.panzer]
+versions = ["1.21.1", "1.21.10", "1.21.11", "26.1"]

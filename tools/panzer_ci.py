@@ -62,8 +62,30 @@ def native_matrix(mod: Mod) -> list[dict]:
     return entries
 
 
-def plan(mod: Mod) -> dict:
+def cache_key(mod: Mod, versions: list[str]) -> str:
+    """Identifies what the build downloads: Minecraft/NeoForge per version, the
+    ModDevGradle and Stonecutter plugins and the Gradle distribution."""
+    import hashlib
+    parts = [f"{v}={mod.config.get(v, {}).get('neo_version', '')}" for v in sorted(versions)]
+    plugins = mod.config.get("plugins", {})
+    parts += [f"{k}={plugins[k]}" for k in sorted(plugins)]
+    wrapper = mod.root / "gradle" / "wrapper" / "gradle-wrapper.properties"
+    if wrapper.is_file():
+        parts.append(wrapper.read_text(encoding="utf-8"))
+    return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:16]
+
+
+def plan(mod: Mod, requested: str = "") -> dict:
     versions = mod.stonecutter_versions
+    gradle_versions = ""
+    if requested.strip():
+        wanted = [v.strip() for v in requested.split(",") if v.strip()]
+        unknown = [v for v in wanted if v not in mod.available_versions]
+        if unknown:
+            raise PanzerError(f"versions {unknown} are not in {mod.name}'s profile {mod.available_versions}")
+        active = mod.config.get("stonecutter", {}).get("vcs_version")
+        versions = [v for v in mod.available_versions if v in wanted or v == active]
+        gradle_versions = f"-Pstonecutter.versions={','.join(wanted)}"
     javas = sorted({java_for(mod.config.get(v, {}).get("minecraft_version", v)) for v in versions}, reverse=True)
     # setup-java makes the last one the default JAVA_HOME (Gradle's own JVM): 21.
     javas = [j for j in javas if j != 21] + [21]
@@ -85,6 +107,9 @@ def plan(mod: Mod) -> dict:
         "gradle-tasks": ci.get("gradle_tasks", "build buildAndCollect"),
         "jars-artifact": f"{mod.id}-jars",
         "maven-pages": str(bool(mod.config.get("publish", {}).get("maven_pages"))).lower(),
+        "versions": ",".join(versions),
+        "gradle-versions": gradle_versions,
+        "cache-key": cache_key(mod, versions),
     }
 
 

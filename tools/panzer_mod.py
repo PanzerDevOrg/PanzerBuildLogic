@@ -71,18 +71,25 @@ def read_toml(path: Path) -> dict:
         return tomllib.load(f)
 
 
-def merge_tables(common: dict, mod: dict) -> dict:
+VERSION_KEY = re.compile(r"^\d+(\.\d+)+(-[\w.]+)?$")
+
+
+def merge_tables(common: dict, mod: dict, top: bool = True) -> dict:
     """Header-level merge, like TomlMerge.kt: if the mod's version of a table has
     any key of its own, those keys replace the common table's keys entirely;
-    sub-tables are merged the same way, one by one."""
+    sub-tables are merged the same way, one by one. Minecraft version blocks
+    (["1.21.1"], top level only) merge key by key instead: the common block's
+    keys, with the mod's added or overriding."""
     def scalars(table: dict) -> dict:
         return {k: v for k, v in table.items() if not isinstance(v, dict)}
 
     merged = dict(scalars(mod) if scalars(mod) else scalars(common))
     for key in list(common) + [k for k in mod if k not in common]:
         c, m = common.get(key), mod.get(key)
-        if isinstance(c, dict) or isinstance(m, dict):
-            merged[key] = merge_tables(c if isinstance(c, dict) else {}, m if isinstance(m, dict) else {})
+        if top and VERSION_KEY.match(key) and isinstance(c, dict) and isinstance(m, dict):
+            merged[key] = {**c, **m}
+        elif isinstance(c, dict) or isinstance(m, dict):
+            merged[key] = merge_tables(c if isinstance(c, dict) else {}, m if isinstance(m, dict) else {}, top=False)
     return merged
 
 
@@ -115,13 +122,22 @@ class Mod:
         return m.group(1) if m else None
 
     @property
-    def stonecutter_versions(self) -> list[str]:
+    def available_versions(self) -> list[str]:
+        """Every version the mod could build: its explicit list, or its profile
+        plus extra_versions, excluded ones included (for trying a port)."""
         sc = self.config.get("stonecutter", {})
         if "versions" in sc:
             return list(sc["versions"])
-        profile = self.config.get("stonecutter", {}).get("profiles", {}).get(sc.get("profile", ""), {})
-        versions = list(profile.get("versions", [])) + list(sc.get("extra_versions", []))
-        return [v for v in dict.fromkeys(versions) if v not in sc.get("exclude_versions", [])]
+        profile = sc.get("profiles", {}).get(sc.get("profile", ""), {})
+        return list(dict.fromkeys(list(profile.get("versions", [])) + list(sc.get("extra_versions", []))))
+
+    @property
+    def stonecutter_versions(self) -> list[str]:
+        """The versions it builds by default (PanzerSettingsPlugin.resolveVersions)."""
+        sc = self.config.get("stonecutter", {})
+        if "versions" in sc:
+            return list(sc["versions"])
+        return [v for v in self.available_versions if v not in sc.get("exclude_versions", [])]
 
     @property
     def natives(self) -> dict[str, dict]:
