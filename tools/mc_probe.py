@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Answers questions about one Minecraft/NeoForge version from its decompiled
 sources, for porting work done away from an IDE (run by a mod's private
-mc-probe workflow; the output is the job log).
+mc-probe workflow; the output is the job log). --sources and --binary may be
+given several times (Minecraft's patched sources, NeoForge's own sources...).
 
 Queries, one per line (or separated by ';;'):
   class  <fqn>                 the whole source file
@@ -19,6 +20,20 @@ import sys
 import zipfile
 
 MAX_GREP = 300
+
+
+class Sources:
+    """Several sources jars read as one; the first jar holding a path wins."""
+
+    def __init__(self, jars: list[zipfile.ZipFile]):
+        self.owner: dict[str, zipfile.ZipFile] = {}
+        for jar in jars:
+            for name in jar.namelist():
+                self.owner.setdefault(name, jar)
+        self.names = set(self.owner)
+
+    def read(self, path: str) -> bytes:
+        return self.owner[path].read(path)
 
 
 def source_path(fqn: str) -> str:
@@ -59,12 +74,12 @@ def methods(text: str, name: str) -> list[tuple[int, list[str]]]:
 
 def main() -> int:
     p = argparse.ArgumentParser()
-    p.add_argument("--sources", required=True)
-    p.add_argument("--binary", required=True)
+    p.add_argument("--sources", required=True, action="append", help="sources jar (repeatable)")
+    p.add_argument("--binary", required=True, action="append", help="class jar for sig queries (repeatable)")
     p.add_argument("--query", required=True, help="queries, newline or ';;' separated")
     args = p.parse_args()
-    src = zipfile.ZipFile(args.sources)
-    names = set(src.namelist())
+    src = Sources([zipfile.ZipFile(path) for path in args.sources])
+    names = src.names
     queries = [q.strip() for q in re.split(r"\n|;;", args.query) if q.strip()]
     for q in queries:
         kind, _, rest = q.partition(" ")
@@ -104,7 +119,7 @@ def main() -> int:
                 for path in sorted(n for n in names if pattern.search(n)):
                     print(path)
             elif kind == "sig":
-                out = subprocess.run(["javap", "-p", "-cp", args.binary, rest], capture_output=True, text=True)
+                out = subprocess.run(["javap", "-p", "-cp", ":".join(args.binary), rest], capture_output=True, text=True)
                 print(out.stdout or out.stderr)
             else:
                 print(f"(unknown query kind '{kind}')")

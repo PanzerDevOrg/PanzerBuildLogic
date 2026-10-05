@@ -377,6 +377,21 @@ class Probe(unittest.TestCase):
         self.assertEqual(hits[1][1][-1].strip(), "}")
         self.assertEqual(len(hits[1][1]), 4)
 
+    def test_several_sources_jars(self):
+        import mc_probe
+        with tempfile.TemporaryDirectory() as tmp:
+            jars = []
+            for i, content in enumerate(["class A { void a() {} }", "class B { void b() {} }"]):
+                path = Path(tmp) / f"s{i}.jar"
+                with zipfile.ZipFile(path, "w") as z:
+                    z.writestr(f"p/{'AB'[i]}.java", content)
+                    z.writestr("p/Shared.java", f"// from jar {i}")
+                jars.append(zipfile.ZipFile(path))
+            src = mc_probe.Sources(jars)
+            self.assertEqual(src.names, {"p/A.java", "p/B.java", "p/Shared.java"})
+            self.assertEqual(src.read("p/B.java").decode(), "class B { void b() {} }")
+            self.assertEqual(src.read("p/Shared.java").decode(), "// from jar 0")
+
 
 class New(unittest.TestCase):
     def test_scaffold(self):
