@@ -259,6 +259,31 @@ sources, adds NeoForge's own sources jar, and prints the answers in its log:
 Queries go one per line (or separated by `;;`). The workflow lives in a private
 repository because its log is decompiled game code.
 
+### Claiming more versions: `panzer compat`
+
+One jar per build version may serve several Minecraft versions (`game_versions`
+in the mod's `["<version>"]` block, e.g. the 1.21.1 build for 1.21 - 1.21.6).
+`panzer compat` checks such a claim on the real thing: for every claimed version
+other than the built one it installs that version's NeoForge dedicated server
+(newest stable build, see `panzer versions neoforge`), puts the release jar and
+its dependencies' jars in `mods/` (their minecraft/neoforge ranges widened, since
+that is what is being checked) and runs the mod's own check:
+
+```toml
+[compat]
+jvm_args = ["-Dvelox.parity=true"]   # makes the mod run its check and stop the server
+report = "velox-parity.txt"          # in the server directory; first line ends with PASS
+timeout_minutes = 15
+server_properties = ["level-type=minecraft\\:flat", "online-mode=false"]
+```
+
+In CI: Mods workflow, action `compat` (optionally `versions` = build versions to
+check), one job per build version, a summary per claimed version and the server
+logs as artifacts. Locally: `panzer compat plan --mod <dir>`, then
+`panzer compat run --mod <dir> --build '<one entry of the plan>'` after
+`./gradlew buildAndCollect`. Claim (`game_versions`, `minecraft_version_range`)
+only what passes.
+
 ## Per-mod version overrides
 
 In `common.stonecutter.properties.toml`:

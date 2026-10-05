@@ -299,6 +299,27 @@ class Versions(unittest.TestCase):
         table = panzer_versions.neoforge_table("1.21.2", xml)
         self.assertEqual([line.split()[0] for line in table], ["minecraft", "1.21.2", "1.21.10", "26.1"])
 
+    def test_compat_plan_and_ranges(self):
+        import panzer_compat
+        xml = "".join(f"<version>{v}</version>" for v in ("21.0.167", "21.1.248", "21.4.150", "21.4.158", "21.10.64"))
+        releases = panzer_versions.neoforge_releases(xml)
+        self.mod.config["1.21.1"]["game_versions"] = ["1.21", "1.21.1", "1.21.4"]
+        self.assertEqual(panzer_compat.plan(self.mod, releases), [])  # no [compat] table
+        self.mod.config["compat"] = {"report": "r.txt"}
+        builds = panzer_compat.plan(self.mod, releases)
+        self.assertEqual(builds, [{"version": "1.21.1", "java": 21, "targets": [
+            {"minecraft": "1.21", "neoforge": "21.0.167", "java": 21},
+            {"minecraft": "1.21.4", "neoforge": "21.4.158", "java": 21}]}])
+        self.mod.config["1.21.1"]["game_versions"] = ["1.21.2"]
+        with self.assertRaises(PanzerError):
+            panzer_compat.plan(self.mod, releases)
+        toml = ('[[dependencies.velox]]\nmodId = "neoforge"\nversionRange = "[21.1,21.2)"\n'
+                '[[dependencies.velox]]\nmodId = "celeris"\nversionRange = "[0.2.0,)"\n'
+                '[[dependencies.velox]]\nmodId = "minecraft"\nversionRange = "[1.21.1,1.21.2)"\n')
+        widened = panzer_compat.widen_ranges(toml)
+        self.assertEqual(widened.count('versionRange = "[0,)"'), 2)
+        self.assertIn('versionRange = "[0.2.0,)"', widened)
+
     def test_matrix_java(self):
         java = {row["version"]: row["java"] for row in panzer_versions.matrix()}
         self.assertEqual((java["1.21.1"], java["26.1"]), (21, 25))

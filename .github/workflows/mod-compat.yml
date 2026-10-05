@@ -1,0 +1,132 @@
+name: Mod compat (reusable)
+
+# Checks a mod's release jars on the other Minecraft versions they claim
+# (game_versions in its ["<version>"] blocks): one job per build version builds
+# its jar, then `panzer compat run` installs the NeoForge dedicated server of
+# every claimed version and runs the mod's own check there ([compat] in its
+# TOML). A version that fails must not be claimed.
+on:
+  workflow_call:
+    inputs:
+      mod-repository:
+        type: string
+        required: true
+      build-logic-ref:
+        type: string
+        default: master
+      versions:
+        description: Only these build versions (comma-separated)
+        type: string
+        default: ""
+
+env:
+  PANZER: panzer-build-logic/tools/panzer.py
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      builds: ${{ steps.compat.outputs.builds }}
+      source-deps: ${{ steps.ci.outputs.source-deps }}
+      cache-key: ${{ steps.ci.outputs.cache-key }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.mod-repository }}
+          token: ${{ secrets.PANZER_SYNC_TOKEN || github.token }}
+          path: mod
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          repository: PanzerDevOrg/PanzerBuildLogic
+          ref: ${{ inputs.build-logic-ref }}
+          path: panzer-build-logic
+          persist-credentials: false
+      - id: ci
+        run: python3 "$PANZER" ci plan --mod mod --github-output > /dev/null
+      - id: compat
+        env:
+          VERSIONS: ${{ inputs.versions }}
+        run: python3 "$PANZER" compat plan --mod mod --versions "$VERSIONS" --github-output
+
+  check:
+    needs: plan
+    if: needs.plan.outputs.builds != '[]'
+    name: ${{ matrix.build.version }} jar
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        build: ${{ fromJSON(needs.plan.outputs.builds) }}
+    defaults:
+      run:
+        working-directory: mod
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.mod-repository }}
+          token: ${{ secrets.PANZER_SYNC_TOKEN || github.token }}
+          path: mod
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          repository: PanzerDevOrg/PanzerBuildLogic
+          ref: ${{ inputs.build-logic-ref }}
+          path: panzer-build-logic
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: zulu
+          java-version: |
+            25
+            21
+      - run: echo "GRADLE_JDKS=-Porg.gradle.java.installations.fromEnv=JAVA_HOME_21_X64,JAVA_HOME_25_X64" >> "$GITHUB_ENV"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches/modules-2
+            ~/.gradle/caches/neoformruntime
+            ~/.gradle/wrapper/dists
+          key: gradle-${{ runner.os }}-${{ needs.plan.outputs.cache-key }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: Dependencies built from source
+        if: needs.plan.outputs.source-deps != '[]'
+        env:
+          DEPS: ${{ needs.plan.outputs.source-deps }}
+          TOKEN: ${{ secrets.PANZER_SYNC_TOKEN || github.token }}
+          VERSION: ${{ matrix.build.version }}
+        run: |
+          set -euo pipefail
+          TOKEN="$(printf '%s' "$TOKEN" | tr -d '[:space:]')"
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)"
+          export GIT_CONFIG_VALUE_0
+          echo "$DEPS" | python3 -c 'import json,sys; [print(d["id"], d["repo"]) for d in json.load(sys.stdin)]' |
+          while read -r id repo; do
+            git clone --depth 1 "https://github.com/${repo}.git" "../dep-$id"
+            (cd "../dep-$id" && chmod +x gradlew && env -u GIT_CONFIG_COUNT -u GIT_CONFIG_KEY_0 -u GIT_CONFIG_VALUE_0 \
+              ./gradlew publishToMavenLocal -Pstonecutter.versions="$VERSION" $GRADLE_JDKS -x test --no-watch-fs)
+          done
+
+      - name: Build the ${{ matrix.build.version }} jar
+        env:
+          VERSION: ${{ matrix.build.version }}
+        run: |
+          chmod +x ./gradlew
+          ./gradlew buildAndCollect -Pstonecutter.versions="$VERSION" $GRADLE_JDKS -x test --no-watch-fs
+
+      - name: Run it on every version it claims
+        env:
+          BUILD: ${{ toJSON(matrix.build) }}
+        run: python3 "../$PANZER" compat run --mod . --build "$BUILD" --work build/compat --summary "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: compat-${{ matrix.build.version }}-logs
+          path: |
+            mod/build/compat/server-*/logs/
+            mod/build/compat/server-*/compat-console.log
+            mod/build/compat/server-*/*.txt
+          if-no-files-found: ignore

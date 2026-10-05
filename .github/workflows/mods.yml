@@ -10,6 +10,8 @@ name: Mods
 #                      sync     as on push
 #                      build    run each mod's full CI here, against this
 #                               build-logic commit, as a dry run (nothing published)
+#                      compat   run each mod's jars on the other Minecraft versions
+#                               they claim (game_versions), on real NeoForge servers
 #                      release  tag v<[mod] version> on each mod's master (needs
 #                               docs/changelogs/<version>.md); the tag's CI publishes
 #                      token    check PANZER_SYNC_TOKEN against every mod: valid,
@@ -36,14 +38,14 @@ on:
       action:
         description: What to do
         type: choice
-        options: [check, sync, build, release, token]
+        options: [check, sync, build, compat, release, token]
         default: check
       mods:
         description: Comma-separated keys from mods.toml, or "all"
         type: string
         default: all
       versions:
-        description: "build only: Minecraft versions to build (comma-separated; may name versions a mod still excludes)"
+        description: "build: Minecraft versions to build (comma-separated; may name versions a mod still excludes); compat: build versions whose claims to check"
         type: string
         default: ""
 
@@ -74,7 +76,7 @@ jobs:
           echo "action=$action" >> "$GITHUB_OUTPUT"
           mods=$(python3 tools/panzer.py mods --json --select "$SELECT")
           # Without the token a private mod cannot even be checked out.
-          if [ "$HAS_TOKEN" != "true" ] && { [ "$action" = build ] || [ "$action" = check ]; }; then
+          if [ "$HAS_TOKEN" != "true" ] && { [ "$action" = build ] || [ "$action" = compat ] || [ "$action" = check ]; }; then
             skipped=$(echo "$mods" | python3 -c 'import json,sys; print(" ".join(m["repo"] for m in json.load(sys.stdin) if m["private"]))')
             [ -z "$skipped" ] || echo "::warning::Skipping private $skipped: reading it needs the PANZER_SYNC_TOKEN secret."
             mods=$(echo "$mods" | python3 -c 'import json,sys; print(json.dumps([m for m in json.load(sys.stdin) if not m["private"]]))')
@@ -86,11 +88,11 @@ jobs:
       - name: Check PANZER_SYNC_TOKEN
         if: >-
           steps.mods.outputs.action == 'sync' || steps.mods.outputs.action == 'release' ||
-          (steps.mods.outputs.action == 'build' && env.HAS_TOKEN == 'true')
+          ((steps.mods.outputs.action == 'build' || steps.mods.outputs.action == 'compat') && env.HAS_TOKEN == 'true')
         env:
           PANZER_SYNC_TOKEN: ${{ secrets.PANZER_SYNC_TOKEN }}
           SELECT: ${{ inputs.mods || 'all' }}
-          READ_ONLY: ${{ steps.mods.outputs.action == 'build' && '--read-only' || '' }}
+          READ_ONLY: ${{ (steps.mods.outputs.action == 'build' || steps.mods.outputs.action == 'compat') && '--read-only' || '' }}
         run: python3 tools/panzer.py token-check --gate --select "$SELECT" $READ_ONLY --summary "$GITHUB_STEP_SUMMARY"
 
   sync:
@@ -188,6 +190,20 @@ jobs:
     secrets: inherit
     permissions:
       contents: write
+
+  compat:
+    needs: plan
+    if: needs.plan.outputs.mods != '[]' && needs.plan.outputs.action == 'compat'
+    strategy:
+      fail-fast: false
+      matrix:
+        mod: ${{ fromJSON(needs.plan.outputs.mods) }}
+    uses: ./.github/workflows/mod-compat.yml
+    with:
+      mod-repository: ${{ matrix.mod.repo }}
+      build-logic-ref: ${{ github.sha }}
+      versions: ${{ inputs.versions }}
+    secrets: inherit
 
   release:
     needs: plan

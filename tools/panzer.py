@@ -18,6 +18,7 @@
   panzer versions prefetch         download and decompile every version once, for all mods
   panzer versions status|clean     local cache size; remove NeoForge versions no mod uses
   panzer versions neoforge [1.21]  NeoForge builds published per Minecraft version (to bump the matrix)
+  panzer compat plan|run           check a built jar on the other Minecraft versions it claims
   panzer ci plan|verify-jars ...   used by .github/workflows/mod-ci.yml
 
 MOD is a path to a mod checkout or a key from mods.toml (celeris, tessera, ...).
@@ -318,6 +319,28 @@ def cmd_versions(args) -> int:
     raise PanzerError(f"unknown action {action}")
 
 
+def cmd_compat(args) -> int:
+    import panzer_compat
+    mod = load_mod(Path(args.mod))
+    if args.compat_command == "plan":
+        only = [v.strip() for v in args.versions.split(",") if v.strip()] or None
+        result = panzer_compat.plan_json(mod, only)
+        out = os.environ.get("GITHUB_OUTPUT")
+        if args.github_output and out:
+            with open(out, "a", encoding="utf-8") as f:
+                f.write(f"builds={result}\n")
+        print(result)
+        return 0
+    build = json.loads(args.build)
+    work = Path(args.work).resolve()
+    work.mkdir(parents=True, exist_ok=True)
+    ok, summary = panzer_compat.run_all(mod, build, work)
+    if args.summary:
+        with open(args.summary, "a", encoding="utf-8") as f:
+            f.write("```\n" + "\n".join(summary) + "\n```\n")
+    return 0 if ok else 1
+
+
 def cmd_ci(args) -> int:
     mod = load_mod(Path(args.mod))
     if args.ci_command == "plan":
@@ -385,6 +408,14 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--no-switch", action="store_true", help="use: keep Stonecutter's active version")
     s.add_argument("--keep-active", action="store_true", help="all: do not reset Stonecutter's active version")
     s.add_argument("--yes", action="store_true", help="clean: really remove")
+    s = sub.add_parser("compat", help="run a built jar on the other Minecraft versions it claims (game_versions)")
+    s.add_argument("compat_command", choices=["plan", "run"])
+    s.add_argument("--mod", default=".")
+    s.add_argument("--versions", default="", help="plan: only these build versions")
+    s.add_argument("--github-output", action="store_true")
+    s.add_argument("--build", help="run: one entry of the plan (JSON)")
+    s.add_argument("--work", default="build/compat", help="run: where servers are installed")
+    s.add_argument("--summary", help="run: append the results to this file (GitHub step summary)")
     s = sub.add_parser("ci", help="CI helpers")
     s.add_argument("ci_command", choices=["plan", "verify-jars"])
     s.add_argument("--mod", default=".")
@@ -398,7 +429,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command in ("sync", "check"):
             return cmd_sync(args, write=args.command == "sync")
         return {"mods": cmd_mods, "new": cmd_new, "release": cmd_release, "secrets": cmd_secrets,
-                "doctor": cmd_doctor, "token-check": cmd_token, "versions": cmd_versions,
+                "doctor": cmd_doctor, "token-check": cmd_token, "versions": cmd_versions, "compat": cmd_compat,
                 "ci": cmd_ci}[args.command](args)
     except PanzerError as e:
         # 2, not 1: `check` uses 1 for "files differ", and CI tells them apart.
