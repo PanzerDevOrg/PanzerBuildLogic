@@ -262,12 +262,23 @@ def run_client(mod: Mod, version: str, target: dict, work: Path) -> tuple[bool, 
 
 
 def failure_lines(server: Path, log: Path) -> list[str]:
-    """Why a server stopped: the first exception lines of its crash report (or console), then the console's end."""
+    """Why a game stopped: each exception of its crash report (or console) with its first frames, then the console's end."""
     reports = sorted((server / "crash-reports").glob("*.txt")) if (server / "crash-reports").is_dir() else []
     source = reports[-1] if reports else log
     text = source.read_text(encoding="utf-8", errors="replace").splitlines() if source.is_file() else []
-    causes = [l for l in text if re.search(r"Exception|Error:|Caused by|Mixin|Description:", l)][:20]
-    tail = log.read_text(encoding="utf-8", errors="replace").splitlines()[-15:] if log.is_file() else []
+    causes, frames = [], 0
+    for line in text:
+        if re.search(r"Exception|Error:|Caused by|Description:|FAILED during", line):
+            causes.append(line)
+            frames = 6
+        elif frames and line.lstrip().startswith("at "):
+            causes.append(line)
+            frames -= 1
+        else:
+            frames = 0
+        if len(causes) >= 45:
+            break
+    tail = log.read_text(encoding="utf-8", errors="replace").splitlines()[-10:] if log.is_file() else []
     return [f"({source.name})", *causes, "...", *tail]
 
 
@@ -307,7 +318,7 @@ def run_all(mod: Mod, build: dict, work: Path) -> tuple[bool, list[str]]:
         ok &= passed
         head = f"{mod.name} {build['version']} jar on Minecraft {target['minecraft']} (NeoForge {target['neoforge']}): " \
                + ("PASS" if passed else "FAIL")
-        shown = lines[:40]
+        shown = lines[:70]
         summary += [head, *(f"    {line}" for line in shown)]
         print("\n".join(summary[-(1 + len(shown)):]), flush=True)
     return ok, summary
