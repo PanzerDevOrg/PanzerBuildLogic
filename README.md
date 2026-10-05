@@ -301,6 +301,18 @@ logs as artifacts. Locally: `panzer compat plan --mod <dir>`, then
 `./gradlew buildAndCollect`. Claim (`game_versions`, `minecraft_version_range`)
 only what passes.
 
+### Can players join? `panzer_join.py`
+
+A mod with a network channel decides who can connect: NeoForge refuses a
+connection when one side has a *required* channel the other lacks, and refuses
+vanilla peers outright. The **Join test** workflow (manual) builds Celeris (any
+ref), Velox and Tessera for each build version, starts a NeoForge dedicated
+server and joins it with a real game client through Quick Play, under Xvfb:
+a Velox server with a client without mods, a server without mods with a
+Tessera client, both together, plus two controls with Celeris 0.2.0 (required
+channel) that must be refused. `tools/panzer_join.py --scenarios <json>` runs any
+other combination of server and client jars.
+
 ## Per-mod version overrides
 
 In `common.stonecutter.properties.toml`:

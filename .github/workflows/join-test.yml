@@ -1,0 +1,153 @@
+name: Join test
+
+# Can players get into a server? Builds Celeris (at `celeris-ref`), Velox and
+# Tessera for each build version, then tools/panzer_join.py starts a NeoForge
+# dedicated server and joins it with a real game client (Quick Play, Xvfb):
+#   - a Velox server (Velox + Celeris), a client with no mods       -> joins
+#   - a server with no mods, a Tessera client (Tessera + Celeris)    -> joins
+#   - Velox server and Tessera client together                       -> joins
+#   - the same with Celeris 0.2.0 (required network channel)         -> refused
+# The last two are controls: they show the test notices a refused connection.
+on:
+  workflow_dispatch:
+    inputs:
+      celeris-ref:
+        description: Celeris branch, tag or commit to build
+        default: master
+      versions:
+        description: Build versions (comma-separated)
+        default: "1.21.1,26.1"
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.plan.outputs.targets }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: plan
+        env:
+          VERSIONS: ${{ inputs.versions }}
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os, tomllib
+          common = tomllib.load(open("common.stonecutter.properties.toml", "rb"))
+          targets = []
+          for v in [x.strip() for x in os.environ["VERSIONS"].split(",") if x.strip()]:
+              block = common[v]
+              java = 25 if int(block["minecraft_version"].split(".")[0]) >= 26 else 21
+              targets.append({"version": v, "minecraft": block["minecraft_version"],
+                              "neoforge": block["neo_version"], "java": java})
+          print("targets=" + json.dumps(targets))
+          PY
+
+  join:
+    needs: plan
+    name: ${{ matrix.target.version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.plan.outputs.targets) }}
+    env:
+      VERSION: ${{ matrix.target.version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: panzer-build-logic
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          repository: PanzerDevOrg/Celeris
+          ref: ${{ inputs.celeris-ref }}
+          path: celeris
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          repository: PanzerDevOrg/Velox
+          token: ${{ secrets.PANZER_SYNC_TOKEN }}
+          path: velox
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          repository: PanzerDevOrg/Tessera
+          path: tessera
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: zulu
+          java-version: |
+            25
+            21
+      - run: echo "GRADLE_JDKS=-Porg.gradle.java.installations.fromEnv=JAVA_HOME_21_X64,JAVA_HOME_25_X64" >> "$GITHUB_ENV"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches/modules-2
+            ~/.gradle/caches/neoformruntime
+            ~/.gradle/wrapper/dists
+          key: gradle-join-${{ runner.os }}-${{ matrix.target.version }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: Build Celeris, Velox and Tessera for ${{ matrix.target.version }}
+        run: |
+          set -euo pipefail
+          for mod in celeris velox tessera; do
+            (cd "$mod" && chmod +x gradlew && ./gradlew buildAndCollect -Pstonecutter.versions="$VERSION" $GRADLE_JDKS -x test --no-watch-fs)
+          done
+          ls celeris/build/libs/*/ velox/build/libs/*/ tessera/build/libs/*/
+
+      - name: Celeris 0.2.0 (control)
+        run: |
+          set -euo pipefail
+          mkdir -p old
+          curl -sSfL -o "old/celeris-0.2.0+$VERSION.jar" \
+            "https://panzerdevorg.github.io/Celeris/maven/com/panzer/mods/celeris-$VERSION/0.2.0/celeris-$VERSION-0.2.0.jar"
+
+      - name: Virtual display
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb libgl1-mesa-dri libglx-mesa0 libegl1 libegl-mesa0 mesa-utils > /dev/null
+
+      - name: Scenarios
+        run: |
+          python3 - <<'PY'
+          import glob, json, os
+          v = os.environ["VERSION"]
+          def jar(mod):
+              found = [j for j in glob.glob(f"{mod}/build/libs/*/{mod}-*+{v}.jar")]
+              assert len(found) == 1, (mod, found)
+              return os.path.abspath(found[0])
+          celeris, velox, tessera = jar("celeris"), jar("velox"), jar("tessera")
+          old = os.path.abspath(f"old/celeris-0.2.0+{v}.jar")
+          scenarios = [
+              {"name": "Velox server, client without mods", "server": [celeris, velox], "client": [], "expect": "join"},
+              {"name": "server without mods, Tessera client", "server": [], "client": [celeris, tessera], "expect": "join"},
+              {"name": "Velox server, Tessera client", "server": [celeris, velox], "client": [celeris, tessera], "expect": "join"},
+              {"name": "control: Celeris 0.2.0 server, client without mods", "server": [old, velox], "client": [], "expect": "refused"},
+              {"name": "control: server without mods, Celeris 0.2.0 client", "server": [], "client": [old, tessera], "expect": "refused"},
+          ]
+          json.dump(scenarios, open("scenarios.json", "w"), indent=1)
+          print(json.dumps(scenarios, indent=1))
+          PY
+
+      - name: Join
+        run: |
+          python3 panzer-build-logic/tools/panzer_join.py --minecraft "${{ matrix.target.minecraft }}" \
+            --neoforge "${{ matrix.target.neoforge }}" --java "${{ matrix.target.java }}" \
+            --scenarios scenarios.json --work join --summary "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: join-${{ matrix.target.version }}-logs
+          path: |
+            join/server-*/logs/
+            join/server-*/join-console.log
+            join/client-*.log
+            join/client/run/logs/
+            join/client/run/crash-reports/
+          if-no-files-found: ignore
