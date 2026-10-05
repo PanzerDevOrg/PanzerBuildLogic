@@ -10,6 +10,7 @@
   panzer secrets [--org ORG]       copy tokens from .env into GitHub Actions secrets (gh CLI)
   panzer publish ...               the release publisher (publishing/panzer_publish.py)
   panzer doctor                    check tools, tokens and checkouts
+  panzer token-check               can PANZER_SYNC_TOKEN read, push and tag every mod?
   panzer ci plan|verify-jars ...   used by .github/workflows/mod-ci.yml
 
 MOD is a path to a mod checkout or a key from mods.toml (celeris, tessera, ...).
@@ -214,6 +215,25 @@ def cmd_doctor(args) -> int:
     return 0 if ok else 1
 
 
+def cmd_token(args) -> int:
+    import panzer_token
+    token = os.environ.get("PANZER_SYNC_TOKEN", "").strip()
+    if not token:
+        lines, ok = ["PANZER_SYNC_TOKEN is not set (environment, .env, or the repository secret in CI)."], False
+    else:
+        repos = sorted({m.repo for m in registry()})
+        lines, ok = panzer_token.check(token, repos)
+    lines.append("")
+    lines.append("Result: the token can do everything the Mods workflow needs." if ok else
+                 "Result: the token is NOT ready; fix the problems above (see .env.example).")
+    report = "\n".join(lines)
+    print(report)
+    if args.summary:
+        with open(args.summary, "a", encoding="utf-8") as f:
+            f.write("## PANZER_SYNC_TOKEN\n\n" + report + "\n")
+    return 0 if ok else 1
+
+
 def cmd_ci(args) -> int:
     mod = load_mod(Path(args.mod))
     if args.ci_command == "plan":
@@ -266,6 +286,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--org", help="set organization secrets instead of per-repository ones")
     s.add_argument("--dry-run", action="store_true")
     sub.add_parser("doctor", help="check the local setup")
+    s = sub.add_parser("token-check", help="check PANZER_SYNC_TOKEN against every mod repository")
+    s.add_argument("--summary", help="also append the report to this file (GitHub step summary)")
     sub.add_parser("publish", help="release publisher (see publishing/README.md)", add_help=False)
     s = sub.add_parser("ci", help="CI helpers")
     s.add_argument("ci_command", choices=["plan", "verify-jars"])
@@ -279,7 +301,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command in ("sync", "check"):
             return cmd_sync(args, write=args.command == "sync")
         return {"mods": cmd_mods, "new": cmd_new, "release": cmd_release, "secrets": cmd_secrets,
-                "doctor": cmd_doctor, "ci": cmd_ci}[args.command](args)
+                "doctor": cmd_doctor, "token-check": cmd_token, "ci": cmd_ci}[args.command](args)
     except PanzerError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

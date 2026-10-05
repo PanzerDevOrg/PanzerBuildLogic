@@ -12,6 +12,8 @@ name: Mods
 #                               build-logic commit, as a dry run (nothing published)
 #                      release  tag v<[mod] version> on each mod's master (needs
 #                               docs/changelogs/<version>.md); the tag's CI publishes
+#                      token    check PANZER_SYNC_TOKEN against every mod: valid,
+#                               repositories visible, fetch and push allowed
 #
 # Needs the PANZER_SYNC_TOKEN secret: a fine-grained token with Contents and
 # Workflows read/write on the mod repositories (see .env.example). Without it,
@@ -34,7 +36,7 @@ on:
       action:
         description: What to do
         type: choice
-        options: [check, sync, build, release]
+        options: [check, sync, build, release, token]
         default: check
       mods:
         description: Comma-separated keys from mods.toml, or "all"
@@ -59,7 +61,7 @@ jobs:
           HAS_TOKEN: ${{ secrets.PANZER_SYNC_TOKEN != '' }}
         run: |
           action="$ACTION"
-          if [ "$HAS_TOKEN" != "true" ] && [ "$action" != "check" ] && [ "$action" != "build" ]; then
+          if [ "$HAS_TOKEN" != "true" ] && { [ "$action" = sync ] || [ "$action" = release ]; }; then
             echo "::warning::PANZER_SYNC_TOKEN is not set: '$action' needs it to push to the mod repositories; running 'check' instead."
             action=check
           fi
@@ -114,6 +116,17 @@ jobs:
           git add -A
           git commit -m "Sync shared files from panzer-build-logic ${GITHUB_SHA::7}"
           git push origin HEAD:master
+
+  token:
+    needs: plan
+    if: needs.plan.outputs.action == 'token'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check PANZER_SYNC_TOKEN (nothing is changed)
+        env:
+          PANZER_SYNC_TOKEN: ${{ secrets.PANZER_SYNC_TOKEN }}
+        run: python3 tools/panzer.py token-check --summary "$GITHUB_STEP_SUMMARY"
 
   build:
     needs: plan

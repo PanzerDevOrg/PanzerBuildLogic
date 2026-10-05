@@ -62,6 +62,7 @@ from anywhere: `./panzer` on Linux/macOS, `panzer` (panzer.cmd) on Windows.
 | `panzer secrets [--org PanzerDevOrg]` | copies `MODRINTH_TOKEN`, `CURSEFORGE_TOKEN`, `PANZER_SYNC_TOKEN` from `.env` into GitHub Actions secrets (needs `gh`) |
 | `panzer publish ...` | the release publisher, see [`publishing/README.md`](publishing/README.md) |
 | `panzer doctor` | checks Python, git/gh/java, tokens and mod checkouts |
+| `panzer token-check` | checks `PANZER_SYNC_TOKEN` against every mod: valid, expiry, repositories visible, fetch and push allowed (changes nothing) |
 
 `MOD` is a path or a key of `mods.toml`. Mod checkouts are looked up next to this
 repository (`../Celeris`, `../Tessera`, `../velox`), or under `PANZER_MODS_DIR`.
@@ -96,7 +97,9 @@ common TOML or `mods.toml` runs `.github/workflows/mods.yml`, which syncs every 
 commits the result straight to its `master` (author `bichal`, overridable with the
 `PANZER_GIT_NAME` / `PANZER_GIT_EMAIL` repository variables). That push runs the mod's
 own CI. It needs the `PANZER_SYNC_TOKEN` secret (fine-grained token, Contents and
-Workflows read/write on the mod repositories); without it the workflow only reports.
+Workflows read/write on the mod repositories; `.env.example` has the exact steps);
+without it the workflow only reports. *Actions → Mods → action: token* checks the
+secret from GitHub itself.
 Each mod's CI also warns when its shared files are out of date.
 
 ## Legal

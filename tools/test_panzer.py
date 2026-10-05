@@ -225,5 +225,60 @@ class Manifest(unittest.TestCase):
             self.assertTrue(source.is_file(), source)
 
 
+
+class TokenCheck(unittest.TestCase):
+    """panzer_token with GitHub's answers simulated."""
+
+    def setUp(self):
+        import panzer_token
+        self.pt = panzer_token
+        self.saved = (panzer_token.api, panzer_token.git_service)
+
+    def tearDown(self):
+        self.pt.api, self.pt.git_service = self.saved
+
+    def fake(self, user_status=200, repo_status=200, upload=200, receive=200, headers=None):
+        R = self.pt.Response
+        self.pt.api = lambda token, path: (R(user_status, headers or {}, "", {"login": "bichal"}) if path == "/user"
+                                           else R(repo_status, {}, "Not Found" if repo_status == 404 else ""))
+        self.pt.git_service = lambda token, repo, svc: R(upload if svc == "git-upload-pack" else receive, {})
+
+    def test_good_fine_grained(self):
+        self.fake(headers={"github-authentication-token-expiration": "2027-01-01 00:00:00 UTC"})
+        lines, ok = self.pt.check("github_pat_x", ["PanzerDevOrg/A"])
+        self.assertTrue(ok)
+        text = "\n".join(lines)
+        self.assertIn("fine-grained", text)
+        self.assertIn("Acts as: bichal", text)
+        self.assertIn("2027-01-01", text)
+        self.assertIn("Workflows permission", text)
+
+    def test_invalid(self):
+        self.fake(user_status=401)
+        lines, ok = self.pt.check("github_pat_x", ["PanzerDevOrg/A"])
+        self.assertFalse(ok)
+        self.assertIn("invalid or expired", lines[0])
+
+    def test_read_only(self):
+        self.fake(receive=403)
+        lines, ok = self.pt.check("github_pat_x", ["PanzerDevOrg/A"])
+        self.assertFalse(ok)
+        self.assertIn("Contents: Read and write", "\n".join(lines))
+
+    def test_repository_not_selected(self):
+        self.fake(repo_status=404, upload=404, receive=404)
+        lines, ok = self.pt.check("github_pat_x", ["PanzerDevOrg/velox"])
+        self.assertFalse(ok)
+        self.assertIn("select it under Repository access", "\n".join(lines))
+
+    def test_classic_scopes(self):
+        self.fake(headers={"x-oauth-scopes": "repo"})
+        lines, ok = self.pt.check("ghp_x", ["PanzerDevOrg/A"])
+        self.assertFalse(ok)
+        self.assertIn("missing scopes: workflow", "\n".join(lines))
+        self.fake(headers={"x-oauth-scopes": "repo, workflow"})
+        self.assertTrue(self.pt.check("ghp_x", ["PanzerDevOrg/A"])[1])
+
+
 if __name__ == "__main__":
     unittest.main()
