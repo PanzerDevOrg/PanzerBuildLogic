@@ -3,6 +3,7 @@ name: Join test
 # Can players get into a server? Builds Celeris (at `celeris-ref`), Velox and
 # Tessera for each build version, then tools/panzer_join.py starts a NeoForge
 # dedicated server and joins it with a real game client (Quick Play, Xvfb):
+#   - a Velox server (Velox + Celeris), a vanilla client (no NeoForge) -> joins
 #   - a Velox server (Velox + Celeris), a client with no mods       -> joins
 #   - a server with no mods, a Tessera client (Tessera + Celeris)    -> joins
 #   - Velox server and Tessera client together                       -> joins
@@ -33,14 +34,18 @@ jobs:
           VERSIONS: ${{ inputs.versions }}
         run: |
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import json, os, tomllib
+          import json, os, tomllib, urllib.request, re
           common = tomllib.load(open("common.stonecutter.properties.toml", "rb"))
+          meta = urllib.request.urlopen("https://maven.neoforged.net/releases/net/neoforged/neoform/maven-metadata.xml").read().decode()
+          neoforms = re.findall(r"<version>([^<]+)</version>", meta)
           targets = []
           for v in [x.strip() for x in os.environ["VERSIONS"].split(",") if x.strip()]:
               block = common[v]
               java = 25 if int(block["minecraft_version"].split(".")[0]) >= 26 else 21
-              targets.append({"version": v, "minecraft": block["minecraft_version"],
-                              "neoforge": block["neo_version"], "java": java})
+              mc = block["minecraft_version"]
+              neoform = [n for n in neoforms if n.split("-")[0] == mc]
+              targets.append({"version": v, "minecraft": mc, "neoforge": block["neo_version"], "java": java,
+                              "neoform": neoform[-1] if neoform else ""})
           print("targets=" + json.dumps(targets))
           PY
 
@@ -113,6 +118,8 @@ jobs:
           sudo apt-get install -y -qq xvfb libgl1-mesa-dri libglx-mesa0 libegl1 libegl-mesa0 mesa-utils > /dev/null
 
       - name: Scenarios
+        env:
+          NEOFORM: ${{ matrix.target.neoform }}
         run: |
           python3 - <<'PY'
           import glob, json, os
@@ -130,6 +137,11 @@ jobs:
               {"name": "control: Celeris 0.2.0 server, client without mods", "server": [old, velox], "client": [], "expect": "refused"},
               {"name": "control: server without mods, Celeris 0.2.0 client", "server": [], "client": [old, tessera], "expect": "refused"},
           ]
+          if os.environ.get("NEOFORM"):
+              scenarios.insert(0, {"name": "Velox server, vanilla client", "server": [celeris, velox],
+                                   "client_loader": "vanilla", "expect": "join"})
+              scenarios.append({"name": "control: Celeris 0.2.0 server, vanilla client", "server": [old, velox],
+                                "client_loader": "vanilla", "expect": "refused"})
           json.dump(scenarios, open("scenarios.json", "w"), indent=1)
           print(json.dumps(scenarios, indent=1))
           PY
@@ -138,6 +150,7 @@ jobs:
         run: |
           python3 panzer-build-logic/tools/panzer_join.py --minecraft "${{ matrix.target.minecraft }}" \
             --neoforge "${{ matrix.target.neoforge }}" --java "${{ matrix.target.java }}" \
+            ${{ matrix.target.neoform && format('--neoform {0}', matrix.target.neoform) || '' }} \
             --scenarios scenarios.json --work join --summary "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v5
@@ -148,6 +161,6 @@ jobs:
             join/server-*/logs/
             join/server-*/join-console.log
             join/client-*.log
-            join/client/run/logs/
-            join/client/run/crash-reports/
+            join/client*/run/logs/
+            join/client*/run/crash-reports/
           if-no-files-found: ignore

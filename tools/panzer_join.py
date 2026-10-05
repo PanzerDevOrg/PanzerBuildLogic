@@ -9,7 +9,11 @@ connection was refused (and why).
         --scenarios scenarios.json --work build/join [--summary $GITHUB_STEP_SUMMARY]
 
 scenarios.json is a list of
-    {"name": "...", "server": ["a.jar", ...], "client": ["b.jar", ...], "expect": "join" | "refused"}
+    {"name": "...", "server": ["a.jar", ...], "client": ["b.jar", ...], "expect": "join" | "refused",
+     "client_loader": "neoforge" | "vanilla"}
+
+A "vanilla" client is plain Minecraft, no NeoForge (ModDevGradle's NeoForm-only
+mode, --neoform <version>); it takes no mods.
 
 A scenario passes when the outcome is the expected one; "refused" scenarios are
 controls that show the check can fail (e.g. a mod with a required network
@@ -49,7 +53,7 @@ rootProject.name = "join-client"
 _BUILD = """plugins { id("net.neoforged.moddev") version "%(moddev)s" }
 java { toolchain { languageVersion = JavaLanguageVersion.of(%(java)d) } }
 neoForge {
-    version = "%(neoforge)s"
+    %(loader)s
     runs {
         create("join") {
             client()
@@ -115,14 +119,14 @@ def install_server(root: Path, neoforge: str, env: dict, work: Path) -> None:
         f.write("\n-Xmx2G\n")
 
 
-def client_project(root: Path, neoforge: str, java: int) -> None:
+def client_project(root: Path, loader: str, java: int) -> None:
     root.mkdir(parents=True, exist_ok=True)
     if not (root / "gradlew").is_file():
         shutil.copy2(BUILD_LOGIC / "gradlew", root / "gradlew")
         shutil.copytree(BUILD_LOGIC / "gradle", root / "gradle")
     (root / "settings.gradle.kts").write_text(_SETTINGS)
     (root / "build.gradle.kts").write_text(_BUILD % {"moddev": moddev_version(), "java": java,
-                                                     "neoforge": neoforge, "port": PORT})
+                                                     "loader": loader, "port": PORT})
     game = root / "run"
     (game / "config").mkdir(parents=True, exist_ok=True)
     # Same as panzer compat's client runs: FML's early window is flaky under Xvfb.
@@ -172,14 +176,19 @@ def run_scenario(s: dict, args, work: Path) -> tuple[bool, list[str]]:
     shutil.rmtree(server_root, ignore_errors=True)
     install_server(server_root, args.neoforge, server_env, work)
     put_mods(server_root / "mods", s.get("server", []))
-    client_root = work / "client"
-    client_project(client_root, args.neoforge, args.java)
+    vanilla = s.get("client_loader", "neoforge") == "vanilla"
+    if vanilla and not args.neoform:
+        return False, ["a vanilla client needs --neoform"]
+    client_root = work / ("client-vanilla" if vanilla else "client")
+    client_project(client_root, f'neoFormVersion = "{args.neoform}"' if vanilla else f'version = "{args.neoforge}"',
+                   args.java)
     put_mods(client_root / "run" / "mods", s.get("client", []))
     shutil.rmtree(client_root / "run" / "logs", ignore_errors=True)
 
     server = Server(server_root, server_env)
     detail = [f"server mods: {', '.join(Path(j).name for j in s.get('server', [])) or 'none'};"
-              f" client mods: {', '.join(Path(j).name for j in s.get('client', [])) or 'none'}"]
+              + (f" vanilla client (NeoForm {args.neoform})" if vanilla else
+                 f" client mods: {', '.join(Path(j).name for j in s.get('client', [])) or 'none'}")]
     if not server.start(60 * 10):
         server.stop()
         return False, detail + ["the server never finished starting", *server.lines[-15:]]
@@ -218,6 +227,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--minecraft", required=True)
     p.add_argument("--neoforge", required=True)
     p.add_argument("--java", type=int, required=True)
+    p.add_argument("--neoform", help="NeoForm version for vanilla clients")
     p.add_argument("--scenarios", required=True, type=Path)
     p.add_argument("--work", required=True, type=Path)
     p.add_argument("--timeout-minutes", type=int, default=12, help="per client, from its launch")
