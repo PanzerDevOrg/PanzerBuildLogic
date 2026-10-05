@@ -204,8 +204,10 @@ class Plan(unittest.TestCase):
     def test_dry_run_publish(self):
         out = Path(self.tmp.name) / "out"
         rc = pp.main(["publish", "--mod", self.tmp.name, "--tag", "v1.2.0", "--out", str(out),
-                      "--dry-run", "--offline", "--targets", "modrinth,curseforge"])
+                      "--dry-run", "--offline"])
         self.assertEqual(rc, 0)
+        self.assertIn("demo-1.2.0+26.1-java.jar", (out / "SHA256SUMS.txt").read_text())
+        self.assertFalse(Path("SHA256SUMS.txt").exists(), "nothing is written outside --out")
         self.assertTrue((out / "preview.html").exists())
         self.assertIn("modrinth: create Demo 1.2.0", (out / "publish.log").read_text())
 

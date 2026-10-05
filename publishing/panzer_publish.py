@@ -540,15 +540,15 @@ class CurseForgeVersions:
 # --------------------------------------------------------------------------- publish
 
 
-def publish_github(plan: dict, dry: bool, log) -> None:
+def publish_github(plan: dict, dry: bool, log, out: Path) -> None:
     tag = plan["tag"]
     if not tag:
         raise PublishError("GitHub release needs --tag")
     notes = github_release_body(plan)
-    notes_file = Path("github-release-notes.md")
+    notes_file = out / "github-release.md"
     notes_file.write_text(notes, encoding="utf-8")
     assets = github_assets(plan)
-    sums = Path("SHA256SUMS.txt")
+    sums = out / "SHA256SUMS.txt"
     sums.write_text("".join(f"{sha256(Path(a))}  {Path(a).name}\n" for a in assets), encoding="utf-8")
     assets.append(str(sums))
     title = f"{plan['mod']['name']} {plan['mod']['version']}"
@@ -564,7 +564,7 @@ def publish_github(plan: dict, dry: bool, log) -> None:
         subprocess.run(cmd, check=True)
 
 
-def publish_modrinth(plan: dict, dry: bool, log) -> None:
+def publish_modrinth(plan: dict, dry: bool, log, out: Path) -> None:
     project = plan["modrinth"]["project"]
     token = os.environ.get("MODRINTH_TOKEN")
     if not dry and not token:
@@ -617,7 +617,7 @@ def curseforge_payload(plan: dict, f: dict, version_ids: list[int]) -> dict:
     return payload
 
 
-def publish_curseforge(plan: dict, dry: bool, log) -> None:
+def publish_curseforge(plan: dict, dry: bool, log, out: Path) -> None:
     project = plan["curseforge"]["project"]
     token = os.environ.get("CURSEFORGE_TOKEN")
     if not token:
@@ -829,7 +829,7 @@ def main(argv: list[str] | None = None) -> int:
                 log(f"{target}: no project id configured, skipped")
                 continue
             try:
-                fn(plan, args.dry_run, log)
+                fn(plan, args.dry_run, log, out)
             except (PublishError, subprocess.CalledProcessError) as e:
                 failures.append(f"{target}: {e}")
                 print(f"::error::{target}: {e}")
