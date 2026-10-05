@@ -256,9 +256,30 @@ def run_client(mod: Mod, version: str, target: dict, work: Path) -> tuple[bool, 
             pass
     report = game / cfg["report"]
     if not report.is_file():
-        return False, [f"no {cfg['report']}: the client did not finish the check", *failure_lines(game, log)]
+        return False, [f"no {cfg['report']}: the client did not finish the check", *failure_lines(game, log),
+                       *mod_log_lines(mod, log)]
     lines = report.read_text(encoding="utf-8").splitlines()
-    return bool(lines) and lines[0].rstrip().endswith("PASS"), lines
+    passed = bool(lines) and lines[0].rstrip().endswith("PASS")
+    return passed, lines if passed else [*lines, *mod_log_lines(mod, log)]
+
+
+def mod_log_lines(mod: Mod, log: Path, limit: int = 40) -> list[str]:
+    """The mod's own WARN/ERROR lines in a console log, each with the exception lines that follow it."""
+    if not log.is_file():
+        return []
+    out, follow = [], 0
+    for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
+        if mod.name in line and re.search(r"/(WARN|ERROR)\]", line):
+            out.append(line)
+            follow = 8
+        elif follow and (line.startswith(("\t", " ")) or re.match(r"[\w.$]+(Exception|Error)", line)):
+            out.append(line)
+            follow -= 1
+        else:
+            follow = 0
+        if len(out) >= limit:
+            break
+    return out
 
 
 def failure_lines(server: Path, log: Path) -> list[str]:
