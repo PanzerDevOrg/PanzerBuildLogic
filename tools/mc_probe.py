@@ -28,8 +28,11 @@ def source_path(fqn: str) -> str:
 def methods(text: str, name: str) -> list[tuple[int, list[str]]]:
     """(first line number, lines) of each declaration of `name` with its body."""
     lines = text.splitlines()
-    decl = re.compile(rf"^\s*(?:@\w+(?:\([^)]*\))?\s*)*(?:(?:public|protected|private|static|final|abstract|"
-                      rf"synchronized|native|default)\s+)*(?:<[^>]+>\s+)?[\w.<>\[\], ?]+\s+{re.escape(name)}\s*\(")
+    # Modifiers and annotations in any order (type-use ones like `public @Nullable
+    # BlockState` included), optional type parameters, the return type, the name.
+    decl = re.compile(rf"^\s*(?:(?:@[\w.]+(?:\([^)]*\))?|public|protected|private|static|final|abstract|"
+                      rf"synchronized|native|default)\s+)*(?:<[^>]+>\s+)?(?:@[\w.]+\s+)*[\w.<>\[\], ?]+\s+"
+                      rf"{re.escape(name)}\s*\(")
     found = []
     i = 0
     while i < len(lines):

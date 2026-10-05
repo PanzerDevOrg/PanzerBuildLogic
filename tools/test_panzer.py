@@ -353,6 +353,31 @@ class Versions(unittest.TestCase):
         self.assertEqual(panzer.main(["versions", "use", "--mod", str(self.root)]), 2)
 
 
+class Probe(unittest.TestCase):
+    def test_method_declarations(self):
+        from mc_probe import methods
+        src = textwrap.dedent("""
+            class A {
+               @Nullable
+               @Override
+               public BlockState set(BlockPos pos, int flags) {
+                  return null;
+               }
+
+               public @Nullable BlockState set(BlockPos pos, @Block.UpdateFlags int flags) {
+                  if (x) { y("}"); }
+                  return state;
+               }
+
+               void other() { this.set(a, 3); }
+            }
+        """)
+        hits = methods(src, "set")
+        self.assertEqual([line for line, _ in hits], [3, 9])
+        self.assertEqual(hits[1][1][-1].strip(), "}")
+        self.assertEqual(len(hits[1][1]), 4)
+
+
 class New(unittest.TestCase):
     def test_scaffold(self):
         with tempfile.TemporaryDirectory() as tmp:
