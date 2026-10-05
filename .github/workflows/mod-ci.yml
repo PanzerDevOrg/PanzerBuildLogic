@@ -271,7 +271,8 @@ jobs:
           VERSIONS: ${{ needs.plan.outputs.gradle-versions }}
         run: |
           chmod +x ./gradlew
-          ./gradlew $TASKS -Ppanzer.native.strict=$STRICT $VERSIONS $GRADLE_JDKS --no-watch-fs --stacktrace
+          # --continue: every version builds and reports, not just the first to fail.
+          ./gradlew $TASKS -Ppanzer.native.strict=$STRICT $VERSIONS $GRADLE_JDKS --continue --no-watch-fs --stacktrace
 
       # Universal jar: every declared native and the legal files; per-system
       # jars: only their OS's natives (java: none); sources jar present.
