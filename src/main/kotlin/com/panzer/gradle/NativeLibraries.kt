@@ -13,18 +13,26 @@ import java.util.Locale
  * cmake_dir = "native"            # CMake project building it; omit for prebuilt binaries
  * headers = "native/include"      # optional: published as the `native-headers` artifact
  * platforms = ["linux-x86_64", "linux-aarch64", "windows-x86_64", "macos-x86_64", "macos-aarch64"]
+ * required = false                # optional (default true): the mod runs without it
+ * jar_name_linux = "libfoo.so.1"  # optional: file name inside the jar, per OS
  * ```
  *
  * Binaries live in the mod at `natives/<os>/<arch>/<file>` (committed, or
- * produced by `buildNative<Name>` for the host), the same layout every mod's
- * `collectNatives` already stages into the jar as `natives/<os>-<arch>/<file>`.
+ * produced by `buildNative<Name>` for the host); `collectNatives`
+ * ([ModPackaging.natives]) stages them into the jar as `natives/<os>-<arch>/<file>`.
+ * CI (mod-ci.yml) builds every CMake-backed platform on its own runner.
  */
 data class NativeLibrarySpec(
     val name: String,
     val cmakeDir: String?,
     val headersDir: String?,
     val platforms: List<NativePlatform>,
+    val required: Boolean = true,
+    val jarNames: Map<String, String> = emptyMap(),
 ) {
+    /** Name inside the jar when it differs from [fileName] (`jar_name_<os>`). */
+    fun jarName(platform: NativePlatform): String? = jarNames[platform.os]
+
     val taskSuffix: String
         get() = name.split('_', '-').joinToString("") { part -> part.replaceFirstChar { it.uppercase() } }
 
@@ -56,6 +64,10 @@ data class NativeLibrarySpec(
                         cmakeDir = table.entries["cmake_dir"]?.takeIf { it.isNotBlank() },
                         headersDir = table.entries["headers"]?.takeIf { it.isNotBlank() },
                         platforms = platforms.map(NativePlatform::parse),
+                        required = table.entries["required"]?.toBoolean() ?: true,
+                        jarNames = listOf("windows", "linux", "macos")
+                            .mapNotNull { os -> table.entries["jar_name_$os"]?.let { os to it } }
+                            .toMap(),
                     )
                 }
 

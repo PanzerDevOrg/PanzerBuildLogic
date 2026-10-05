@@ -35,7 +35,25 @@ fun pluginVersion(key: String): String {
 dependencies {
     implementation("dev.kikugie.stonecutter:dev.kikugie.stonecutter.gradle.plugin:${pluginVersion("stonecutter")}")
     implementation("net.neoforged.moddev:net.neoforged.moddev.gradle.plugin:${pluginVersion("moddev")}")
+    implementation("org.gradle.toolchains:foojay-resolver:${pluginVersion("foojay")}")
     implementation("com.google.code.gson:gson:2.14.0")
+}
+
+// Class-based plugins. panzer.settings is a settings plugin: a mod's
+// settings.gradle.kts applies it after includeBuild("../panzer-build-logic"),
+// which puts this build (and Stonecutter, ModDevGradle, Foojay) on the settings
+// classpath shared by every project of the mod.
+gradlePlugin {
+    plugins {
+        register("panzerSettings") {
+            id = "panzer.settings"
+            implementationClass = "com.panzer.gradle.PanzerSettingsPlugin"
+        }
+        register("panzerStonecutter") {
+            id = "panzer.stonecutter"
+            implementationClass = "com.panzer.gradle.PanzerStonecutterPlugin"
+        }
+    }
 }
 
 // `kotlin-dsl` auto-registers every `src/main/kotlin/*.gradle.kts` precompiled script

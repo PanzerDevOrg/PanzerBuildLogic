@@ -62,6 +62,10 @@ README = textwrap.dedent('''
 
     ## Requirements
     Java 21.
+
+    <!-- panzer:footer -->
+    Made by **Panzer**
+    <!-- /panzer:footer -->
 ''')
 
 
@@ -117,6 +121,11 @@ class Description(unittest.TestCase):
         self.assertIn("https://raw.githubusercontent.com/PanzerDevOrg/Demo/master/docs/media/shot.png", md)
         self.assertIn("[the license](https://github.com/PanzerDevOrg/Demo/blob/master/LICENSE)", md)
         self.assertIn("[docs](https://example.com)", md)
+
+    def test_panzer_markers_dropped_content_kept(self):
+        md = pp.published_markdown(README, self.cfg)
+        self.assertNotIn("panzer:footer", md)
+        self.assertIn("Made by **Panzer**", md)
 
     def test_dependency_links_per_site(self):
         self.assertIn("[Celeris](https://modrinth.com/mod/sQphaM3I)", pp.published_markdown(README, self.cfg, "modrinth"))

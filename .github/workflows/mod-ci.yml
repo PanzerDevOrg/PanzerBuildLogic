@@ -1,0 +1,301 @@
+name: Mod CI (reusable)
+
+# The whole pipeline of every mod, configured by its mod.stonecutter.properties.toml
+# (each mod's .github/workflows/ci.yml only calls this):
+#
+#   plan     reads the TOML (tools/panzer.py ci plan): native build matrix, JDKs,
+#            dependencies built from source, Maven publishing; warns when the
+#            mod's shared files differ from panzer-build-logic (`panzer check`)
+#   natives  every CMake-backed [natives.<name>] platform, built and self-tested
+#            on its own runner (ci_linux_script: all Linux platforms in one job,
+#            ci_prepare: run first, e.g. to vendor sources)
+#   build    every Minecraft version with tests; universal, per-system and
+#            sources jars, verified (tools/panzer.py ci verify-jars)
+#   maven    v* tags with [publish] maven_pages = true: the mod's static Maven
+#            repository on its gh-pages branch
+#   release  mod-release.yml: GitHub release, Modrinth, CurseForge. A dry run
+#            with a private "release-preview" artifact on every push; real only
+#            on v* tags (unless a manual run keeps dry_run ticked)
+#
+# mod-repository lets panzer-build-logic build any mod from its own Actions tab
+# (.github/workflows/mods.yml); such runs never publish.
+on:
+  workflow_call:
+    inputs:
+      dry-run:
+        description: '"true"/"false" from a manual run of the caller, empty otherwise'
+        type: string
+        default: ""
+      targets:
+        type: string
+        default: github,modrinth,curseforge
+      mod-repository:
+        description: Owner/Repo of the mod (default the calling repository)
+        type: string
+        default: ""
+      mod-ref:
+        type: string
+        default: ""
+      build-logic-ref:
+        type: string
+        default: master
+
+env:
+  PANZER: panzer-build-logic/tools/panzer.py
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      mod-id: ${{ steps.plan.outputs.mod-id }}
+      version: ${{ steps.plan.outputs.version }}
+      natives: ${{ steps.plan.outputs.natives }}
+      has-natives: ${{ steps.plan.outputs.has-natives }}
+      strict-natives: ${{ steps.plan.outputs.strict-natives }}
+      java: ${{ steps.plan.outputs.java }}
+      source-deps: ${{ steps.plan.outputs.source-deps }}
+      gradle-tasks: ${{ steps.plan.outputs.gradle-tasks }}
+      jars-artifact: ${{ steps.plan.outputs.jars-artifact }}
+      maven-pages: ${{ steps.plan.outputs.maven-pages }}
+      publish: ${{ steps.publish.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.mod-repository || github.repository }}
+          ref: ${{ inputs.mod-ref }}
+          token: ${{ inputs.mod-repository && secrets.PANZER_SYNC_TOKEN || github.token }}
+          path: mod
+      - uses: actions/checkout@v5
+        with:
+          repository: PanzerDevOrg/PanzerBuildLogic
+          ref: ${{ inputs.build-logic-ref }}
+          path: panzer-build-logic
+
+      - name: Plan from mod.stonecutter.properties.toml
+        id: plan
+        run: python3 "$PANZER" ci plan --mod mod --github-output
+
+      # Publishing happens only for a v* tag of the mod's own repository, and
+      # never when a manual run keeps dry_run ticked.
+      - name: Publish or dry run
+        id: publish
+        env:
+          DRY_RUN: ${{ inputs.dry-run }}
+          FROM_BUILD_LOGIC: ${{ inputs.mod-repository }}
+        run: |
+          publish=false
+          if [[ "$GITHUB_REF" == refs/tags/v* && "$DRY_RUN" != "true" && -z "$FROM_BUILD_LOGIC" ]]; then publish=true; fi
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "Publish: $publish (ref $GITHUB_REF)"
+
+      - name: Shared files up to date
+        continue-on-error: true
+        run: python3 "$PANZER" check mod --ci
+
+  natives:
+    needs: plan
+    if: needs.plan.outputs.has-natives == 'true'
+    name: native ${{ matrix.lib }} ${{ matrix.key }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.natives) }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: mod
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.mod-repository || github.repository }}
+          ref: ${{ inputs.mod-ref }}
+          token: ${{ inputs.mod-repository && secrets.PANZER_SYNC_TOKEN || github.token }}
+          path: mod
+      # JNI headers for libraries that need them (JAVA_HOME/include).
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Prepare (${{ matrix.prepare }})
+        if: matrix.prepare != ''
+        run: bash "${{ matrix.prepare }}"
+
+      - name: Build with ${{ matrix.script }}
+        if: matrix.script != ''
+        run: bash "${{ matrix.script }}"
+
+      # Builds every ISA variant the project has and runs its CTest suite (e.g.
+      # cp_selftest checks each one the runner's CPU supports).
+      - name: CMake build and self-test
+        if: matrix.script == ''
+        env:
+          CMAKE_DIR: ${{ matrix.cmake_dir }}
+          PLATFORM: ${{ matrix.platform }}
+          FILE: ${{ matrix.file }}
+        run: |
+          set -euo pipefail
+          cmake -S "$CMAKE_DIR" -B "build-native/$PLATFORM" -DCMAKE_BUILD_TYPE=Release
+          cmake --build "build-native/$PLATFORM" --config Release --parallel
+          ctest --test-dir "build-native/$PLATFORM" -C Release --output-on-failure --no-tests=ignore
+          dest="natives/${PLATFORM%%-*}/${PLATFORM#*-}"
+          mkdir -p "$dest"
+          find "build-native/$PLATFORM" -name "$FILE" -exec cp {} "$dest/" \;
+
+      - name: Collect
+        env:
+          OUTPUTS: ${{ matrix.outputs }}
+        run: |
+          set -euo pipefail
+          for f in $OUTPUTS; do
+            [ -f "$f" ] || { echo "::error::$f was not built"; exit 1; }
+            mkdir -p "../out/$(dirname "$f")"
+            cp "$f" "../out/$f"
+            ls -l "../out/$f"
+          done
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: native-${{ needs.plan.outputs.mod-id }}-${{ matrix.lib }}-${{ matrix.key }}
+          path: out/
+          if-no-files-found: error
+
+  build:
+    needs: [plan, natives]
+    if: ${{ !cancelled() && needs.plan.result == 'success' && (needs.natives.result == 'success' || needs.natives.result == 'skipped') }}
+    name: Build every version + package
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mod
+    steps:
+      # settings.gradle.kts includeBuild()s ../panzer-build-logic, so the
+      # repositories sit side by side under the workspace.
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.mod-repository || github.repository }}
+          ref: ${{ inputs.mod-ref }}
+          token: ${{ inputs.mod-repository && secrets.PANZER_SYNC_TOKEN || github.token }}
+          path: mod
+      - uses: actions/checkout@v5
+        with:
+          repository: PanzerDevOrg/PanzerBuildLogic
+          ref: ${{ inputs.build-logic-ref }}
+          path: panzer-build-logic
+
+      - name: Set up JDKs
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: ${{ needs.plan.outputs.java }}
+
+      # [depends_on.<id>] ci_build_from_source: that mod's default branch,
+      # published to mavenLocal (which the build resolves first), for
+      # dependencies whose version is not released yet.
+      - name: Build dependencies from source
+        if: needs.plan.outputs.source-deps != '[]'
+        env:
+          DEPS: ${{ needs.plan.outputs.source-deps }}
+          TOKEN: ${{ secrets.PANZER_SYNC_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          echo "$DEPS" | python3 -c 'import json,sys; [print(d["id"], d["repo"], d["versions"]) for d in json.load(sys.stdin)]' |
+          while read -r id repo versions; do
+            echo "::group::$repo -> mavenLocal ($versions)"
+            git clone --depth 1 "https://x-access-token:${TOKEN}@github.com/${repo}.git" "../dep-$id"
+            (cd "../dep-$id" && chmod +x gradlew && ./gradlew publishToMavenLocal -Pstonecutter.versions="$versions" -x test --no-watch-fs --stacktrace)
+            echo "::endgroup::"
+          done
+
+      - name: Download native builds
+        if: needs.plan.outputs.has-natives == 'true'
+        uses: actions/download-artifact@v5
+        with:
+          pattern: native-${{ needs.plan.outputs.mod-id }}-*
+          merge-multiple: true
+          path: mod
+
+      - name: Gradle ${{ needs.plan.outputs.gradle-tasks }}
+        env:
+          TASKS: ${{ needs.plan.outputs.gradle-tasks }}
+          STRICT: ${{ needs.plan.outputs.strict-natives }}
+        run: |
+          chmod +x ./gradlew
+          ./gradlew $TASKS -Ppanzer.native.strict=$STRICT --no-watch-fs --stacktrace
+
+      # Universal jar: every declared native and the legal files; per-system
+      # jars: only their OS's natives (java: none); sources jar present.
+      - name: Verify jars
+        run: python3 "../$PANZER" ci verify-jars --mod . ${{ needs.plan.outputs.strict-natives == 'true' && '--strict' || '' }}
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: ${{ needs.plan.outputs.jars-artifact }}
+          path: mod/build/libs/
+          if-no-files-found: error
+
+  maven:
+    # Consumers resolve <group>:<id>-<mc>:<version> from https://<owner>.github.io/<repo>/maven.
+    needs: [plan, natives, build]
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.plan.outputs.publish == 'true' && needs.plan.outputs.maven-pages == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: mod
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: mod
+      - uses: actions/checkout@v5
+        with:
+          repository: PanzerDevOrg/PanzerBuildLogic
+          ref: ${{ inputs.build-logic-ref }}
+          path: panzer-build-logic
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: ${{ needs.plan.outputs.java }}
+      - name: Download native builds
+        if: needs.plan.outputs.has-natives == 'true'
+        uses: actions/download-artifact@v5
+        with:
+          pattern: native-${{ needs.plan.outputs.mod-id }}-*
+          merge-multiple: true
+          path: mod
+
+      # Refuse to publish if the tag disagrees with [mod] version, so v0.2.0
+      # can never ship 0.1.0 artifacts.
+      - name: Check tag matches mod version
+        run: |
+          [ "v${{ needs.plan.outputs.version }}" = "$GITHUB_REF_NAME" ] || { echo "::error::Tag $GITHUB_REF_NAME != mod version ${{ needs.plan.outputs.version }}"; exit 1; }
+
+      - name: Publish every version to the staging Maven tree
+        run: |
+          chmod +x ./gradlew
+          ./gradlew publishAllPublicationsToGitHubPagesRepository -Ppanzer.native.strict=${{ needs.plan.outputs.strict-natives }} --no-watch-fs --stacktrace
+
+      - name: Publish static Maven repo to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ github.token }}
+          publish_dir: ./mod/build/publish-repo
+          destination_dir: maven
+          keep_files: true
+
+  release:
+    needs: [plan, build, maven]
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.maven.result != 'failure' }}
+    uses: PanzerDevOrg/PanzerBuildLogic/.github/workflows/mod-release.yml@master
+    with:
+      jars-artifact: ${{ needs.plan.outputs.jars-artifact }}
+      dry-run: ${{ needs.plan.outputs.publish != 'true' }}
+      targets: ${{ inputs.targets }}
+      build-logic-ref: ${{ inputs.build-logic-ref }}
+      mod-repository: ${{ inputs.mod-repository }}
+      mod-ref: ${{ inputs.mod-ref }}
+      preview-name: ${{ inputs.mod-repository && format('release-preview-{0}', needs.plan.outputs.mod-id) || 'release-preview' }}
+    secrets: inherit
+    permissions:
+      contents: write

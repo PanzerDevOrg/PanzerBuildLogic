@@ -1,0 +1,15 @@
+# Every mod built on panzer-build-logic. `panzer sync --all`, `panzer check --all`,
+# `panzer mods` and .github/workflows/mods.yml work through this list.
+#
+#   repo:   GitHub repository (Owner/Repo)
+#   folder: local checkout next to panzer-build-logic (default: the repository
+#           name; PANZER_MODS_DIR changes the parent folder)
+
+[mods.celeris]
+repo = "PanzerDevOrg/Celeris"
+
+[mods.tessera]
+repo = "PanzerDevOrg/Tessera"
+
+[mods.velox]
+repo = "PanzerDevOrg/velox"

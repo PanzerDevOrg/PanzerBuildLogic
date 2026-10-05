@@ -32,7 +32,7 @@ table rows, headings deeper than `####`.
 
 ## Release
 
-On a `v*` tag, the mod's CI builds its jars and calls `mod-release.yml`:
+On a `v*` tag, the mod's CI (`mod-ci.yml`) builds its jars and calls `mod-release.yml`:
 
 - **GitHub release**: universal jar per Minecraft range, the per-system jars from
   `[publish] platforms` (`windows`, `linux`, `macos`: only that OS's natives; `java`:
@@ -70,18 +70,22 @@ github = "PanzerDevOrg/Celeris"      # README links to it become the site's page
 game_versions = ["1.21", "1.21.1"]   # what this jar is published for
 ```
 
-Secrets: `MODRINTH_TOKEN`, `CURSEFORGE_TOKEN` (repository secrets, passed with
-`secrets: inherit`). A missing project id skips that site.
+Secrets: `MODRINTH_TOKEN`, `CURSEFORGE_TOKEN` (repository or organization
+secrets, passed with `secrets: inherit`; `panzer secrets` sets them from `.env`).
+A missing project id skips that site.
 
 ## Testing without publishing
 
 ```bash
 pip install markdown-it-py
-python3 publishing/panzer_publish.py preview --mod ../Celeris --out /tmp/celeris-preview
+./panzer publish preview --mod ../Celeris --out /tmp/celeris-preview
 # open /tmp/celeris-preview/preview.html: Modrinth page, CurseForge page, GitHub release, upload table
-python3 publishing/panzer_publish.py publish --mod ../Celeris --dry-run --offline
+./panzer publish publish --mod ../Celeris --dry-run --offline
 python3 -m unittest discover -s publishing
 ```
+
+`./panzer publish ...` is `python3 publishing/panzer_publish.py ...` with `.env`
+loaded (tokens for local, non-dry runs).
 
 In CI every push runs the release workflow as a dry run and uploads the same
 preview as the `release-preview` artifact; `workflow_dispatch` runs it on demand.

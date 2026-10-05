@@ -1,0 +1,50 @@
+# Everything legal every PanzerDevOrg mod ships, in one place.
+#
+# `./panzer sync` turns this catalog plus [legal] / [legal.third_party] from the
+# mod's TOML into the mod's LICENSE, LICENSE-<x>, NOTICE and the README's
+# license block; the build plugin then packs those same files into every jar
+# (META-INF/) and sources jar. Change a text here, run the sync (or let CI do
+# it) and every mod picks it up.
+
+# Licenses a mod can use for its own code or assets, keyed by SPDX id
+# ([legal] code / assets).
+#   file:    name of the full text in the mod repository and jar
+#   text:    full license text, relative to this directory
+#   summary: one plain-language line for the README
+[licenses."AGPL-3.0-only"]
+name = "GNU Affero General Public License v3.0"
+label = "AGPL-3.0"
+file = "LICENSE-AGPL"
+text = "licenses/AGPL-3.0-only.txt"
+url = "https://www.gnu.org/licenses/agpl-3.0.html"
+summary = "you may study, modify and redistribute it under the AGPL; if you run a modified version as a network service, its source must be available to that service's users."
+
+[licenses."CC-BY-NC-SA-4.0"]
+name = "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International"
+label = "CC BY-NC-SA 4.0"
+file = "LICENSE-CC"
+text = "licenses/CC-BY-NC-SA-4.0.txt"
+url = "https://creativecommons.org/licenses/by-nc-sa/4.0/"
+summary = "credit {holder}, no commercial use without permission, and share derivatives under the same license."
+
+# Third-party code a mod bundles, listed by id in the mod's
+# [legal.third_party] components. Its notice and full license text go into
+# the mod's NOTICE file (and META-INF/NOTICE in every jar), which BSD and MIT
+# require for binary redistribution.
+#   text:       upstream license file, verbatim, relative to this directory
+#   bundled_as: what of it ends up in the jar
+[components.zstd]
+name = "Zstandard (zstd)"
+url = "https://github.com/facebook/zstd"
+license = "BSD-3-Clause"
+copyright = "Copyright (c) Meta Platforms, Inc. and affiliates."
+text = "third-party/zstd.txt"
+bundled_as = "prebuilt native libraries (natives/<os>-<arch>/libzstd, zstd.dll)"
+
+[components.bc7enc_rdo]
+name = "bc7enc_rdo"
+url = "https://github.com/richgel999/bc7enc_rdo"
+license = "MIT OR Unlicense"
+copyright = "Copyright (c) 2020-2021 Richard Geldreich, Jr."
+text = "third-party/bc7enc_rdo.txt"
+bundled_as = "sources compiled into the bundled native library"

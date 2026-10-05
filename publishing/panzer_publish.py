@@ -20,8 +20,10 @@ Commands (all write only under --out unless they publish):
              its HTML is written for pasting, see README)
 
 Only the standard library is required, plus markdown-it-py for the HTML rendering
-(`pip install markdown-it-py`). Tokens come from the environment: MODRINTH_TOKEN,
-CURSEFORGE_TOKEN, GH_TOKEN (for `gh`).
+(`pip install markdown-it-py`). Tokens come from the environment or a .env file
+(the current directory, the mod, panzer-build-logic; see .env.example):
+MODRINTH_TOKEN, CURSEFORGE_TOKEN, GH_TOKEN (for `gh`). Also available as
+`panzer publish ...`.
 """
 from __future__ import annotations
 
@@ -222,6 +224,8 @@ def range_text(versions: list[str]) -> str:
 # --------------------------------------------------------------------------- description
 
 PUBLISH_OFF = re.compile(r"<!--\s*publish:off\s*-->.*?<!--\s*publish:on\s*-->\n?", re.S)
+# <!-- panzer:<block> --> markers around README blocks `panzer sync` maintains.
+PANZER_MARKER = re.compile(r"[ \t]*<!--\s*/?panzer:[\w-]+\s*-->[ \t]*\n?")
 MD_LINK = re.compile(r"(!?)\[([^\]]*)\]\(([^)\s]+)((?:\s+\"[^\"]*\")?)\)")
 HTML_SRC = re.compile(r"""(<img\b[^>]*?\bsrc=)(["'])([^"']+)\2""", re.I)
 HTML_HREF = re.compile(r"""(<a\b[^>]*?\bhref=)(["'])([^"']+)\2""", re.I)
@@ -257,7 +261,7 @@ def site_url(url: str, cfg: ModConfig, site: str) -> str:
 def published_markdown(readme: str, cfg: ModConfig, site: str = "modrinth") -> str:
     """The README as a mod site gets it: GitHub-only blocks removed, links made absolute,
     dependency links pointed at that site."""
-    text = PUBLISH_OFF.sub("", readme)
+    text = PANZER_MARKER.sub("", PUBLISH_OFF.sub("", readme))
 
     def md(m: re.Match) -> str:
         bang, label, url, title = m.groups()
@@ -768,6 +772,18 @@ def preview_html(plan: dict, modrinth_md: str, cf_html: str) -> str:
 # --------------------------------------------------------------------------- cli
 
 
+def load_env(mod: Path) -> None:
+    """.env from the current directory, the mod and panzer-build-logic (tools/panzer_mod.py)."""
+    tools = Path(__file__).resolve().parent.parent / "tools"
+    if str(tools) not in sys.path:
+        sys.path.insert(0, str(tools))
+    try:
+        from panzer_mod import BUILD_LOGIC, load_dotenv
+    except ImportError:
+        return
+    load_dotenv(Path.cwd(), mod, BUILD_LOGIC)
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("command", choices=["describe", "plan", "check", "preview", "publish", "sync"])
@@ -779,6 +795,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--dry-run", action="store_true", help="do everything except the uploads")
     p.add_argument("--offline", action="store_true", help="check without querying Modrinth/CurseForge")
     args = p.parse_args(argv)
+    load_env(args.mod)
 
     out: Path = args.out
     out.mkdir(parents=True, exist_ok=True)

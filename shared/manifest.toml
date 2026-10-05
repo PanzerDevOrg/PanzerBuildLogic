@@ -1,0 +1,88 @@
+# Files panzer-build-logic keeps identical in every mod repository.
+#
+#   panzer sync  [MOD|--all]   write them into local checkouts
+#   panzer check [MOD|--all]   list what differs (each mod's CI warns about it too)
+#   .github/workflows/mods.yml pushes them to every repository in mods.toml
+#                              whenever any of them changes here
+#
+# Besides these, every mod gets its legal files (LICENSE, LICENSE-<x>, NOTICE)
+# generated from legal/ and its [legal] table.
+
+# [[file]]: copied byte for byte.
+#   path:       in the mod repository
+#   from:       in panzer-build-logic (default: shared/mod/<path>)
+#   keep:       regexes of lines the mod owns; their current text is kept
+#   executable: set the executable bit
+
+[[file]]
+path = "gradlew"
+from = "gradlew"
+executable = true
+
+[[file]]
+path = "gradlew.bat"
+from = "gradlew.bat"
+
+[[file]]
+path = "gradle/wrapper/gradle-wrapper.jar"
+from = "gradle/wrapper/gradle-wrapper.jar"
+
+[[file]]
+path = "gradle/wrapper/gradle-wrapper.properties"
+from = "gradle/wrapper/gradle-wrapper.properties"
+
+[[file]]
+path = "gradle.properties"
+
+[[file]]
+path = "settings.gradle.kts"
+
+# Stonecutter rewrites the `stonecutter active` line when the active version
+# changes in the IDE; that line stays as the mod has it.
+[[file]]
+path = "stonecutter.gradle.kts"
+keep = ['^stonecutter active ']
+
+[[file]]
+path = ".gitattributes"
+
+[[file]]
+path = ".github/workflows/ci.yml"
+
+[[file]]
+path = ".github/workflows/descriptions.yml"
+
+# Lines between the panzer-build-logic markers of .gitignore; the rest of the
+# file belongs to the mod.
+[gitignore]
+lines = [
+  ".*/",
+  "!.github/",
+  "build/",
+  "build-native/",
+  "versions/",
+  "run/",
+  "logs/",
+  "# generated from mod.stonecutter.properties.toml + the common TOML",
+  "stonecutter.properties.toml",
+  "# local secrets and settings (see panzer-build-logic/.env.example)",
+  ".env",
+  "repomix*",
+  "__pycache__/",
+]
+
+# README blocks between <!-- panzer:<name> --> and <!-- /panzer:<name> -->,
+# generated from [legal]: "license" (the License section) and "footer" (one
+# line: code license, art license, holder). The publisher drops the markers.
+[readme]
+blocks = ["license", "footer"]
+
+# Former per-mod copies of what now comes from here; deleted when present.
+[remove]
+paths = [
+  ".github/workflows/package.yml",
+  "src/main/resources/LICENSE",
+  "src/main/resources/NOTICE",
+  "src/main/resources/META-INF/LICENSE",
+  "src/main/resources/META-INF/NOTICE",
+]

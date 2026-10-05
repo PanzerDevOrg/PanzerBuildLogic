@@ -23,8 +23,9 @@ jobs:
       - run: chmod +x gradlew
       - run: ./gradlew build
 
-  publishing-tests:
-    # The release/description publisher every mod's CI runs (publishing/).
+  tools-tests:
+    # The panzer tool (tools/: sync, legal, CI helpers) and the publisher
+    # (publishing/) every mod's CI runs.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,6 +33,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install --quiet markdown-it-py
+      - run: python3 -m unittest discover -s tools -v
       - run: python3 -m unittest discover -s publishing -v
 
   publish:
@@ -59,8 +61,7 @@ jobs:
         run: ./gradlew publish -PpanzerBuildLogicVersion=${{ steps.version.outputs.value }}
 
       # gh-pages serves plain static files -- no server, no auth, no GitHub Packages
-      # token required for consumers, just a URL. This is what
-      # templates/settings.gradle.kts points its fallback `maven(...)` repository at.
+      # token required for consumers, just a URL.
       - name: Publish static Maven repo to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
         with:

@@ -6,6 +6,17 @@ moddev = "2.0.143"
 [dependencies]
 junit = "6.1.3"
 
+# Licenses of every mod, from panzer-build-logic/legal/catalog.toml (SPDX ids).
+# `panzer sync` writes LICENSE, LICENSE-<x>, NOTICE and the README license
+# block from this; the build packs those files into every jar and uses `code`
+# as neoforge.mods.toml's license. A mod that needs different terms declares
+# its own complete [legal] table; bundled third-party code goes in the mod's
+# [legal.third_party] components.
+[legal]
+holder = "Panzer"
+code = "AGPL-3.0-only"
+assets = "CC-BY-NC-SA-4.0"
+
 [neoforge]
 loader_version_range = "[4,)"
 

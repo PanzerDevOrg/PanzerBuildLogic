@@ -1,0 +1,160 @@
+name: Mods
+
+# Control center for every mod in mods.toml, run from panzer-build-logic:
+#
+#   push to master   when shared/, legal/, tools/, the wrapper or the common TOML
+#                    change: sync, i.e. commit the updated shared files straight
+#                    to each mod's master (which then runs the mod's own CI)
+#   manual run       action:
+#                      check    report what differs, change nothing
+#                      sync     as on push
+#                      build    run each mod's full CI here, against this
+#                               build-logic commit, as a dry run (nothing published)
+#                      release  tag v<[mod] version> on each mod's master (needs
+#                               docs/changelogs/<version>.md); the tag's CI publishes
+#
+# Needs the PANZER_SYNC_TOKEN secret: a fine-grained token with Contents and
+# Workflows read/write on the mod repositories (see .env.example). Without it,
+# pushes become checks. Commits are authored by vars.PANZER_GIT_NAME /
+# vars.PANZER_GIT_EMAIL (default bichal <vtorresnun@gmail.com>).
+on:
+  push:
+    branches: [master]
+    paths:
+      - "shared/**"
+      - "legal/**"
+      - "tools/**"
+      - "mods.toml"
+      - "common.stonecutter.properties.toml"
+      - "gradlew"
+      - "gradlew.bat"
+      - "gradle/wrapper/**"
+  workflow_dispatch:
+    inputs:
+      action:
+        description: What to do
+        type: choice
+        options: [check, sync, build, release]
+        default: check
+      mods:
+        description: Comma-separated keys from mods.toml, or "all"
+        type: string
+        default: all
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      mods: ${{ steps.mods.outputs.mods }}
+      action: ${{ steps.mods.outputs.action }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: mods
+        env:
+          ACTION: ${{ inputs.action || 'sync' }}
+          SELECT: ${{ inputs.mods || 'all' }}
+          HAS_TOKEN: ${{ secrets.PANZER_SYNC_TOKEN != '' }}
+        run: |
+          action="$ACTION"
+          if [ "$HAS_TOKEN" != "true" ] && [ "$action" != "check" ] && [ "$action" != "build" ]; then
+            echo "::warning::PANZER_SYNC_TOKEN is not set: '$action' needs it to push to the mod repositories; running 'check' instead."
+            action=check
+          fi
+          echo "action=$action" >> "$GITHUB_OUTPUT"
+          echo "mods=$(python3 tools/panzer.py mods --json --select "$SELECT")" >> "$GITHUB_OUTPUT"
+
+  sync:
+    needs: plan
+    if: needs.plan.outputs.action == 'sync' || needs.plan.outputs.action == 'check'
+    name: ${{ needs.plan.outputs.action }} ${{ matrix.mod.key }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mod: ${{ fromJSON(needs.plan.outputs.mods) }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: panzer-build-logic
+      # Private mods can only be read with PANZER_SYNC_TOKEN; without it they
+      # are reported, not failed.
+      - uses: actions/checkout@v5
+        id: checkout
+        continue-on-error: true
+        with:
+          repository: ${{ matrix.mod.repo }}
+          token: ${{ secrets.PANZER_SYNC_TOKEN || github.token }}
+          path: mod
+      - if: steps.checkout.outcome != 'success'
+        run: echo "::warning::Cannot read ${{ matrix.mod.repo }}; set the PANZER_SYNC_TOKEN secret (see .env.example)."
+
+      - name: panzer ${{ needs.plan.outputs.action }}
+        id: sync
+        if: steps.checkout.outcome == 'success'
+        env:
+          ACTION: ${{ needs.plan.outputs.action }}
+        run: |
+          set -o pipefail
+          python3 panzer-build-logic/tools/panzer.py "$ACTION" mod --diff --ci | tee sync.log || true
+          echo "changed=$([ -n "$(git -C mod status --porcelain)" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          { echo "### ${{ matrix.mod.repo }}"; echo '```'; cat sync.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Commit and push to master
+        if: steps.checkout.outcome == 'success' && needs.plan.outputs.action == 'sync' && steps.sync.outputs.changed == 'true'
+        working-directory: mod
+        env:
+          NAME: ${{ vars.PANZER_GIT_NAME || 'bichal' }}
+          EMAIL: ${{ vars.PANZER_GIT_EMAIL || 'vtorresnun@gmail.com' }}
+        run: |
+          git config user.name "$NAME"
+          git config user.email "$EMAIL"
+          git add -A
+          git commit -m "Sync shared files from panzer-build-logic ${GITHUB_SHA::7}"
+          git push origin HEAD:master
+
+  build:
+    needs: plan
+    if: needs.plan.outputs.action == 'build'
+    strategy:
+      fail-fast: false
+      matrix:
+        mod: ${{ fromJSON(needs.plan.outputs.mods) }}
+    uses: ./.github/workflows/mod-ci.yml
+    with:
+      mod-repository: ${{ matrix.mod.repo }}
+      build-logic-ref: ${{ github.sha }}
+      dry-run: ${{ 'true' }}
+    secrets: inherit
+    permissions:
+      contents: write
+
+  release:
+    needs: plan
+    if: needs.plan.outputs.action == 'release'
+    name: release ${{ matrix.mod.key }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mod: ${{ fromJSON(needs.plan.outputs.mods) }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: panzer-build-logic
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ matrix.mod.repo }}
+          token: ${{ secrets.PANZER_SYNC_TOKEN }}
+          fetch-depth: 0
+          path: mod
+      - name: Tag v<version>
+        env:
+          NAME: ${{ vars.PANZER_GIT_NAME || 'bichal' }}
+          EMAIL: ${{ vars.PANZER_GIT_EMAIL || 'vtorresnun@gmail.com' }}
+        run: |
+          git -C mod config user.name "$NAME"
+          git -C mod config user.email "$EMAIL"
+          python3 panzer-build-logic/tools/panzer.py release mod --push

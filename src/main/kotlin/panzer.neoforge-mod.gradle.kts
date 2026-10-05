@@ -3,12 +3,14 @@
 import com.panzer.gradle.CMakeBuildTask
 import com.panzer.gradle.JvmModulePreprocessor
 import com.panzer.gradle.ModBuildProperties
+import com.panzer.gradle.ModPackaging
 import com.panzer.gradle.NativePlatform
 import com.panzer.gradle.NeoForgeMutexPlugin
 import com.panzer.gradle.OptimizeTexturesTask
 import com.panzer.gradle.PanzerModExtension
 import com.panzer.gradle.PlatformJars
 import com.panzer.gradle.PreprocessJvmModuleTask
+import com.panzer.gradle.TomlBlockReader
 import dev.kikugie.stonecutter.build.StonecutterBuildExtension
 import java.util.*
 import java.util.zip.ZipFile
@@ -247,7 +249,15 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
+// Packaging every mod shares (see ModPackaging): [depends_on.*] dependencies,
+// neoforge.mods.toml / mixin expansion, legal files in every jar, natives,
+// buildAndCollect and the per-system jars of [publish] platforms.
 if (hasStonecutterExtension) {
+    val mergedTables = TomlBlockReader.parse(rootProject.file("stonecutter.properties.toml"))
+    ModPackaging.dependencies(project, modProps, mergedTables)
+    ModPackaging.resources(project, modProps, mergedTables)
+    ModPackaging.natives(project, modProps)
+    ModPackaging.jars(project, modProps)
     PlatformJars.register(project, modProps.publishPlatforms, modProps.modVersion)
 }
 

@@ -5,8 +5,8 @@ package com.panzer.gradle
 import java.io.File
 
 /**
- * Validates a mod's merged TOML before any Gradle project exists (called from
- * `settings.gradle.kts`, right after the merge). Collects every problem found
+ * Validates a mod's merged TOML before any Gradle project exists (called by
+ * [PanzerSettingsPlugin], right after the merge). Collects every problem found
  * and fails once with a complete report, instead of making the developer fix
  * and re-run Gradle one error at a time.
  *
@@ -20,10 +20,11 @@ object PanzerDiagnostics {
         "mod.id", "mod.version", "mod.group", "mod.name", "mod.package",
     )
 
+    // parchment_mappings_version is optional: ParchmentMC has no mappings for
+    // every Minecraft version (none for 26.x).
     private val REQUIRED_VERSION_FIELDS = listOf(
         "minecraft_version", "minecraft_version_range",
         "neo_version", "neo_version_range",
-        "parchment_mappings_version",
     )
 
     private val VERSION_RANGE_PATTERN = Regex("""^[\[(][^,]*,[^,]*[])]$""")
@@ -51,7 +52,7 @@ object PanzerDiagnostics {
         val warnings = mutableListOf<String>()
 
         if (!mergedToml.exists()) {
-            errors += "Could not find '${mergedToml.path}'. Did settings.gradle.kts run the merge?"
+            errors += "Could not find '${mergedToml.path}'. Did the panzer.settings plugin run the merge?"
             return Report(errors, warnings)
         }
 
@@ -120,7 +121,8 @@ object PanzerDiagnostics {
         @Suppress("DestructuringDeclaration")
         for (table in toolTables) {
             val toolName = table.path[1]
-            if (table.entries["version"].isNullOrBlank()) {
+            val disabled = table.entries["enabled"] == "false"
+            if (!disabled && table.entries["version"].isNullOrBlank()) {
                 warnings += "[tools.$toolName] does not declare 'version' -- it will resolve to null " +
                         "and fail if any task requires it."
             }
