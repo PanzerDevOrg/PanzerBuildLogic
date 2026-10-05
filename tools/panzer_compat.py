@@ -84,15 +84,43 @@ def mod_jar(mod: Mod, version: str) -> Path:
     return jar
 
 
+def dependency_build(dep: dict, version: str, minecraft: str) -> str:
+    """The dependency's build that claims `minecraft` (its TOML on GitHub), else the mod's build version.
+
+    A player on 1.21.6 installs the dependency file made for 1.21.6, which need not
+    be the one built alongside this jar (Celeris's 1.21.1 build, not its 1.21.10 one).
+    """
+    repo = dep.get("repo")
+    if not repo:
+        return version
+    url = f"https://api.github.com/repos/{repo}/contents/mod.stonecutter.properties.toml"
+    request = urllib.request.Request(url, headers={"Accept": "application/vnd.github.raw"})
+    token = os.environ.get("GH_TOKEN", "").strip()
+    if token:
+        request.add_header("Authorization", f"token {token}")
+    try:
+        import tomllib
+        with urllib.request.urlopen(request, timeout=30) as response:
+            config = tomllib.loads(response.read().decode("utf-8"))
+    except Exception as e:  # noqa: BLE001 - any failure: the build version, as before
+        print(f"{repo}: could not read its TOML ({e}); using its {version} build")
+        return version
+    for build, block in config.items():
+        if isinstance(block, dict) and minecraft in block.get("game_versions", []):
+            return build
+    return version
+
+
 def dependency_jars(mod: Mod, version: str, minecraft: str, work: Path) -> list[Path]:
-    """Required mods' jars: mavenLocal first (dependencies built from source), then their Maven repository."""
+    """Required mods' jars for `minecraft`: mavenLocal first (built from source), then their Maven repository."""
     jars = []
     for dep_id, dep in mod.depends_on.items():
         artifact = dep.get("artifact")
         if not artifact:
             continue
-        # {mc} is the build version: the dependency jar built for the same Minecraft as the mod's.
-        group, name = artifact.split(":")[0], artifact.split(":")[1].replace("{mc}", version)
+        # {mc} is the dependency's build that claims this Minecraft version.
+        build = dependency_build(dep, version, minecraft)
+        group, name = artifact.split(":")[0], artifact.split(":")[1].replace("{mc}", build)
         rel = Path(*group.split(".")) / name / dep["version"] / f"{name}-{dep['version']}.jar"
         local = Path.home() / ".m2" / "repository" / rel
         if local.is_file():

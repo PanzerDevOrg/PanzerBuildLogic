@@ -128,6 +128,7 @@ jobs:
       - name: Run it on every version it claims
         env:
           BUILD: ${{ toJSON(matrix.build) }}
+          GH_TOKEN: ${{ secrets.PANZER_SYNC_TOKEN || github.token }}
         run: python3 "../$PANZER" compat run --mod . --build "$BUILD" --work build/compat --summary "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v5
