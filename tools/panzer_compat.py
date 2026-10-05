@@ -237,6 +237,10 @@ def run_client(mod: Mod, version: str, target: dict, work: Path) -> tuple[bool, 
         copy_widened(jar, game / "mods" / jar.name)
     if cfg.get("client_options"):
         (game / "options.txt").write_text("\n".join(cfg["client_options"]) + "\n")
+    # FML's early loading window is flaky under Xvfb (an NPE reading its own config in
+    # GlDebug on 21.7/21.8 runs); it is not what is being checked.
+    (game / "config").mkdir(exist_ok=True)
+    (game / "config" / "fml.toml").write_text("earlyWindowControl = false\n")
 
     env = dict(os.environ, JAVA_HOME=java_home(21))
     env["PATH"] = f"{env['JAVA_HOME']}/bin{os.pathsep}{env['PATH']}"
