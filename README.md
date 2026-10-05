@@ -277,6 +277,10 @@ timeout_minutes = 15
 server_properties = ["level-type=minecraft\\:flat", "online-mode=false"]
 ```
 
+Without `report` the run is a smoke test (the server starts with the jar, then
+stops cleanly): for libraries with no check of their own, an empty `[compat]`
+table is enough.
+
 In CI: Mods workflow, action `compat` (optionally `versions` = build versions to
 check), one job per build version, a summary per claimed version and the server
 logs as artifacts. Locally: `panzer compat plan --mod <dir>`, then

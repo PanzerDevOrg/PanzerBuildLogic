@@ -14,6 +14,9 @@ its TOML:
     timeout_minutes = 15
     server_properties = ["level-type=minecraft\\:flat", ...]
 
+Without `report` (a library such as Celeris, with no check of its own) the run
+is a smoke test: the server must start with the jar ("Done"), then stop cleanly.
+
 The jars' own minecraft/neoforge version ranges are widened for the run (that
 claim is exactly what is being checked). A version whose jar fails to load,
 crashes or reports FAIL must not be claimed.
@@ -126,8 +129,6 @@ def java_home(java: int) -> str:
 def run(mod: Mod, version: str, target: dict, work: Path) -> tuple[bool, list[str]]:
     """Installs NeoForge `target` in `work`, runs the mod's check there; (passed, report lines)."""
     cfg = mod.config.get("compat") or {}
-    if not cfg.get("report"):
-        raise PanzerError(f"{mod.name}: no [compat] report in its TOML")
     mc, neoforge = target["minecraft"], target["neoforge"]
     server = work / f"server-{mc}"
     shutil.rmtree(server, ignore_errors=True)
@@ -152,9 +153,11 @@ def run(mod: Mod, version: str, target: dict, work: Path) -> tuple[bool, list[st
     with open(server / "user_jvm_args.txt", "a", encoding="utf-8") as f:
         f.write("\n" + "\n".join(["-Xmx3G", *cfg.get("jvm_args", [])]) + "\n")
 
-    report = server / cfg["report"]
     timeout = 60 * int(cfg.get("timeout_minutes", 15))
     log = server / "compat-console.log"
+    if not cfg.get("report"):
+        return smoke(server, env, log, timeout)
+    report = server / cfg["report"]
     with open(log, "w", encoding="utf-8") as console:
         try:
             subprocess.run(["bash", "run.sh", "nogui"], cwd=server, env=env, stdout=console,
@@ -166,6 +169,35 @@ def run(mod: Mod, version: str, target: dict, work: Path) -> tuple[bool, list[st
         return False, [f"no {cfg['report']}: the server did not finish the check", *tail]
     lines = report.read_text(encoding="utf-8").splitlines()
     return bool(lines) and lines[0].rstrip().endswith("PASS"), lines
+
+
+def smoke(server: Path, env: dict, log: Path, timeout: int) -> tuple[bool, list[str]]:
+    """Starts the server, stops it once it is up; passes if it got there and exited cleanly."""
+    import threading
+    proc = subprocess.Popen(["bash", "run.sh", "nogui"], cwd=server, env=env, stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    started = threading.Event()
+    timer = threading.Timer(timeout, proc.kill)
+    timer.start()
+    try:
+        with open(log, "w", encoding="utf-8") as console:
+            for line in proc.stdout:
+                console.write(line)
+                if not started.is_set() and "Done (" in line and "For help" in line:
+                    started.set()
+                    proc.stdin.write("stop\n")
+                    proc.stdin.flush()
+        code = proc.wait()
+    finally:
+        timer.cancel()
+    text = log.read_text(encoding="utf-8", errors="replace")
+    crashed = "---- Minecraft Crash Report ----" in text or "Exception in server tick loop" in text
+    ok = started.is_set() and code == 0 and not crashed
+    detail = [f"server {'started' if started.is_set() else 'never started'}, exit code {code}"
+              + (", crash report" if crashed else "")]
+    if not ok:
+        detail += [l for l in text.splitlines() if "Exception" in l or "Error" in l][:15]
+    return ok, detail
 
 
 def run_all(mod: Mod, build: dict, work: Path) -> tuple[bool, list[str]]:
