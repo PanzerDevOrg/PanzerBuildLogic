@@ -344,6 +344,9 @@ class Versions(unittest.TestCase):
         self.assertEqual(plan["versions"], "1.21.1,1.21.10")
         self.assertEqual(plan["gradle-versions"], "")
         self.assertEqual(plan["java"], "21")
+        self.assertEqual(plan["display"], "false")
+        self.mod.config.setdefault("ci", {})["display"] = True
+        self.assertEqual(panzer_ci.plan(self.mod)["display"], "true")
 
     def test_ci_plan_requested_versions(self):
         plan = panzer_ci.plan(self.mod, " 26.1 ")

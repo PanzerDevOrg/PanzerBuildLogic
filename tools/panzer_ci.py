@@ -105,6 +105,8 @@ def plan(mod: Mod, requested: str = "") -> dict:
         "java": "\n".join(str(j) for j in javas),
         "source-deps": json.dumps(source_deps),
         "gradle-tasks": ci.get("gradle_tasks", "build buildAndCollect"),
+        # [ci] display = true: the tasks start game clients (self-tests), run under Xvfb with Mesa.
+        "display": str(bool(ci.get("display"))).lower(),
         "jars-artifact": f"{mod.id}-jars",
         "maven-pages": str(bool(mod.config.get("publish", {}).get("maven_pages"))).lower(),
         "versions": ",".join(versions),

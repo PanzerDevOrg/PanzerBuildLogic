@@ -172,7 +172,7 @@ Each mod's `.github/workflows/ci.yml` calls `mod-ci.yml`, which reads the mod's 
 |---|---|
 | plan | native matrix, JDKs (21, plus 25 for 26.x), source dependencies, publish or dry run, shared-file check |
 | natives | each CMake `[natives.<name>]` platform on its own runner, with its CTest suite; `ci_prepare` runs first, `ci_linux_script` builds all Linux platforms in one job instead |
-| build | `./gradlew build buildAndCollect -Ppanzer.native.strict=true` (`[ci] gradle_tasks` overrides), then `panzer ci verify-jars`: natives per jar, legal files, sources |
+| build | `./gradlew build buildAndCollect -Ppanzer.native.strict=true` (`[ci] gradle_tasks` overrides; `[ci] display = true` runs it under Xvfb with Mesa, for tasks that start a game client), then `panzer ci verify-jars`: natives per jar, legal files, sources |
 | maven | `[publish] maven_pages = true`, on tags: the mod's Maven repository on gh-pages |
 | release | `mod-release.yml`: dry run with a `release-preview` artifact on every push, publishing on `v*` tags |
 

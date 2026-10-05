@@ -59,6 +59,7 @@ jobs:
       java: ${{ steps.plan.outputs.java }}
       source-deps: ${{ steps.plan.outputs.source-deps }}
       gradle-tasks: ${{ steps.plan.outputs.gradle-tasks }}
+      display: ${{ steps.plan.outputs.display }}
       jars-artifact: ${{ steps.plan.outputs.jars-artifact }}
       maven-pages: ${{ steps.plan.outputs.maven-pages }}
       publish: ${{ steps.publish.outputs.publish }}
@@ -264,15 +265,27 @@ jobs:
           merge-multiple: true
           path: mod
 
+      # [ci] display = true: game clients (self-tests) need a screen and OpenGL:
+      # a virtual X server, and Mesa's llvmpipe (OpenGL 4.5 in software).
+      - name: Virtual display
+        if: needs.plan.outputs.display == 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb libgl1-mesa-dri libglx-mesa0 mesa-utils > /dev/null
+          xvfb-run -a -s "-screen 0 1280x720x24" glxinfo -B | grep -E "OpenGL (renderer|core profile version)" || true
+
       - name: Gradle ${{ needs.plan.outputs.gradle-tasks }}
         env:
           TASKS: ${{ needs.plan.outputs.gradle-tasks }}
           STRICT: ${{ needs.plan.outputs.strict-natives }}
           VERSIONS: ${{ needs.plan.outputs.gradle-versions }}
+          DISPLAY_NEEDED: ${{ needs.plan.outputs.display }}
         run: |
           chmod +x ./gradlew
+          wrap=()
+          if [ "$DISPLAY_NEEDED" = true ]; then wrap=(xvfb-run -a -s "-screen 0 1280x720x24"); fi
           # --continue: every version builds and reports, not just the first to fail.
-          ./gradlew $TASKS -Ppanzer.native.strict=$STRICT $VERSIONS $GRADLE_JDKS --continue --no-watch-fs --stacktrace
+          "${wrap[@]}" ./gradlew $TASKS -Ppanzer.native.strict=$STRICT $VERSIONS $GRADLE_JDKS --continue --no-watch-fs --stacktrace
 
       # Universal jar: every declared native and the legal files; per-system
       # jars: only their OS's natives (java: none); sources jar present.
