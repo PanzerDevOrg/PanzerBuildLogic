@@ -252,6 +252,7 @@ sources, adds NeoForge's own sources jar, and prints the answers in its log:
 | `grep <regex> [<path prefix>]` | matching lines (`path:line: text`), at most 300; no spaces in the regex (use `\s+`) |
 | `find <regex>` | source paths matching |
 | `sig <class>` | `javap -p` of the compiled class |
+| `file <path>` | any file in the game jars: shaders, JSON, lang files |
 
 Queries go one per line (or separated by `;;`). The workflow lives in a private
 repository because its log is decompiled game code.

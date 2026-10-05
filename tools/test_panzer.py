@@ -392,6 +392,21 @@ class Probe(unittest.TestCase):
             self.assertEqual(src.read("p/B.java").decode(), "class B { void b() {} }")
             self.assertEqual(src.read("p/Shared.java").decode(), "// from jar 0")
 
+    def test_file_query_reads_any_jar(self):
+        import subprocess, sys
+        with tempfile.TemporaryDirectory() as tmp:
+            sources, binary = Path(tmp) / "s.jar", Path(tmp) / "b.jar"
+            with zipfile.ZipFile(sources, "w") as z:
+                z.writestr("a/A.java", "class A {}")
+            with zipfile.ZipFile(binary, "w") as z:
+                z.writestr("assets/minecraft/shaders/core/x.fsh", "void main() {}")
+            out = subprocess.run([sys.executable, str(Path(__file__).with_name("mc_probe.py")),
+                                  "--sources", str(sources), "--binary", str(binary),
+                                  "--query", "file assets/minecraft/shaders/core/x.fsh;;file core/x.fsh"],
+                                 capture_output=True, text=True, check=True).stdout
+            self.assertIn("void main() {}", out)
+            self.assertIn("same name: assets/minecraft/shaders/core/x.fsh", out)
+
 
 class New(unittest.TestCase):
     def test_scaffold(self):

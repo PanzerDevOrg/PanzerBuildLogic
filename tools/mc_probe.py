@@ -10,6 +10,7 @@ Queries, one per line (or separated by ';;'):
   grep   <regex> [<path-prefix>]   matching lines (path:line: text), at most 300
   find   <regex>               source paths matching the regex
   sig    <fqn>                 javap -p of the compiled class (members and descriptors)
+  file   <path>                any file from the sources or binary jars (shaders, JSON...)
 """
 from __future__ import annotations
 
@@ -80,6 +81,7 @@ def main() -> int:
     args = p.parse_args()
     src = Sources([zipfile.ZipFile(path) for path in args.sources])
     names = src.names
+    everything = Sources([zipfile.ZipFile(path) for path in args.sources + args.binary])
     queries = [q.strip() for q in re.split(r"\n|;;", args.query) if q.strip()]
     for q in queries:
         kind, _, rest = q.partition(" ")
@@ -118,6 +120,12 @@ def main() -> int:
                 pattern = re.compile(rest)
                 for path in sorted(n for n in names if pattern.search(n)):
                     print(path)
+            elif kind == "file":
+                if rest in everything.names:
+                    print(everything.read(rest).decode(errors="replace"))
+                else:
+                    matches = sorted(n for n in everything.names if n.endswith("/" + rest.split("/")[-1]))
+                    print(f"(no {rest}" + (f"; same name: {', '.join(matches[:10])})" if matches else ")"))
             elif kind == "sig":
                 out = subprocess.run(["javap", "-p", "-cp", ":".join(args.binary), rest], capture_output=True, text=True)
                 print(out.stdout or out.stderr)
