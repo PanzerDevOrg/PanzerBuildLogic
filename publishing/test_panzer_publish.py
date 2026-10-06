@@ -1,5 +1,6 @@
 """Offline tests for panzer_publish (python -m unittest discover publishing)."""
 import json
+import os
 import tempfile
 import textwrap
 import unittest
@@ -219,6 +220,24 @@ class Plan(unittest.TestCase):
         self.assertFalse(Path("SHA256SUMS.txt").exists(), "nothing is written outside --out")
         self.assertTrue((out / "preview.html").exists())
         self.assertIn("modrinth: create Demo 1.2.0", (out / "publish.log").read_text())
+
+    def test_missing_site_token_skips_that_site(self):
+        out = Path(self.tmp.name) / "out-real"
+        calls = []
+        saved = pp.publish_github, {k: os.environ.pop(k, None) for k in pp.SITE_TOKENS.values()}
+        pp.publish_github = lambda plan, dry, log, out: calls.append("github")
+        try:
+            rc = pp.main(["publish", "--mod", self.tmp.name, "--tag", "v1.2.0", "--out", str(out), "--offline"])
+        finally:
+            pp.publish_github = saved[0]
+            for k, v in saved[1].items():
+                if v is not None:
+                    os.environ[k] = v
+        self.assertEqual(rc, 0)
+        self.assertEqual(calls, ["github"])
+        log = (out / "publish.log").read_text()
+        self.assertIn("modrinth: MODRINTH_TOKEN is not available to this repository, skipped", log)
+        self.assertIn("targets=curseforge", log)
 
 
 if __name__ == "__main__":

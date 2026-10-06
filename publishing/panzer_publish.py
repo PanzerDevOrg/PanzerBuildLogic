@@ -587,6 +587,9 @@ def publish_github(plan: dict, dry: bool, log, out: Path) -> None:
         subprocess.run(cmd, check=True)
 
 
+SITE_TOKENS = {"modrinth": "MODRINTH_TOKEN", "curseforge": "CURSEFORGE_TOKEN"}
+
+
 def publish_modrinth(plan: dict, dry: bool, log, out: Path) -> None:
     project = plan["modrinth"]["project"]
     token = os.environ.get("MODRINTH_TOKEN")
@@ -863,6 +866,15 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             if not needed:
                 log(f"{target}: no project id configured, skipped")
+                continue
+            token = SITE_TOKENS.get(target)
+            if token and not args.dry_run and not os.environ.get(token):
+                # A private repository on GitHub Free does not get organization
+                # secrets: publish the rest, say how to finish this site later.
+                skipped = (f"{target}: {token} is not available to this repository, skipped; once it is set, "
+                           f"run the CI on tag {plan['tag']} with dry_run off and targets={target}")
+                log(skipped)
+                print(f"::warning::{skipped}")
                 continue
             try:
                 fn(plan, args.dry_run, log, out)
