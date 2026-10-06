@@ -8,8 +8,9 @@ name: Join test
 #   - a server with no mods, a Tessera client (Tessera + Celeris)    -> joins
 #   - Mojang's vanilla server, a Tessera client                      -> joins
 #   - Velox server and Tessera client together                       -> joins
-#   - the same with Celeris 0.2.0 (required network channel)         -> refused
-# The last two are controls: they show the test notices a refused connection.
+#   - Celeris 0.2.0 alone (required network channel) on either side   -> refused
+# The refused ones are controls: they show the test notices a refused connection.
+# They use Celeris alone because Velox and Tessera now require Celeris 0.2.1.
 on:
   workflow_dispatch:
     inputs:
@@ -136,14 +137,14 @@ jobs:
               {"name": "server without mods, Tessera client", "server": [], "client": [celeris, tessera], "expect": "join"},
               {"name": "vanilla server, Tessera client", "server_loader": "vanilla", "client": [celeris, tessera], "expect": "join"},
               {"name": "Velox server, Tessera client", "server": [celeris, velox], "client": [celeris, tessera], "expect": "join"},
-              {"name": "control: Celeris 0.2.0 server, client without mods", "server": [old, velox], "client": [], "expect": "refused"},
-              {"name": "control: server without mods, Celeris 0.2.0 client", "server": [], "client": [old, tessera], "expect": "refused"},
-              {"name": "control: vanilla server, Celeris 0.2.0 client", "server_loader": "vanilla", "client": [old, tessera], "expect": "refused"},
+              {"name": "control: Celeris 0.2.0 server, client without mods", "server": [old], "client": [], "expect": "refused"},
+              {"name": "control: server without mods, Celeris 0.2.0 client", "server": [], "client": [old], "expect": "refused"},
+              {"name": "control: vanilla server, Celeris 0.2.0 client", "server_loader": "vanilla", "client": [old], "expect": "refused"},
           ]
           if os.environ.get("NEOFORM"):
               scenarios.insert(0, {"name": "Velox server, vanilla client", "server": [celeris, velox],
                                    "client_loader": "vanilla", "expect": "join"})
-              scenarios.append({"name": "control: Celeris 0.2.0 server, vanilla client", "server": [old, velox],
+              scenarios.append({"name": "control: Celeris 0.2.0 server, vanilla client", "server": [old],
                                 "client_loader": "vanilla", "expect": "refused"})
           json.dump(scenarios, open("scenarios.json", "w"), indent=1)
           print(json.dumps(scenarios, indent=1))

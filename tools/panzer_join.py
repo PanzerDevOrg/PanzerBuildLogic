@@ -80,7 +80,13 @@ class Server:
         self.proc = subprocess.Popen(self.command, cwd=self.root, env=self.env, stdin=subprocess.PIPE,
                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         threading.Thread(target=self._read, daemon=True).start()
-        return self.done.wait(timeout)
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.done.wait(2):
+                return True
+            if self.proc.poll() is not None:
+                return False  # it stopped before it was up (e.g. a mod refused to load)
+        return False
 
     def _read(self) -> None:
         with open(self.root / "join-console.log", "w", encoding="utf-8") as log:
@@ -180,6 +186,18 @@ def start_client(root: Path, log: Path) -> subprocess.Popen:
                             stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
 
 
+CLIENT_FATAL = ("Failed to start FML", "---- Minecraft Crash Report ----", "ModLoadingException")
+
+
+def client_failed(log: Path) -> bool:
+    """The game never got as far as joining: mod loading failed or it crashed."""
+    try:
+        text = log.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return any(marker in text for marker in CLIENT_FATAL)
+
+
 def kill_tree(proc: subprocess.Popen) -> None:
     for sig in (signal.SIGTERM, signal.SIGKILL):
         try:
@@ -241,6 +259,8 @@ def run_scenario(s: dict, args, work: Path) -> tuple[bool, list[str]]:
                         detail.append("server: " + line.split("]: ", 1)[-1])
                         outcome = "refused"
             seen = len(server.lines)
+            if outcome is None and client_failed(client_log):
+                outcome = "client failed to start"
             if client.poll() is not None and outcome is None:
                 outcome = "client exited"
     finally:
@@ -248,7 +268,7 @@ def run_scenario(s: dict, args, work: Path) -> tuple[bool, list[str]]:
         server.stop()
     if outcome is None:
         outcome = "timeout"
-    if outcome in ("client exited", "timeout"):
+    if outcome in ("client exited", "client failed to start", "timeout"):
         tail = client_log.read_text(encoding="utf-8", errors="replace").splitlines()[-25:] if client_log.is_file() else []
         detail += [f"client: {outcome}", *tail]
     ok = outcome == s["expect"]
