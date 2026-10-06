@@ -38,10 +38,25 @@ jobs:
           python-version: "3.12"
       - run: pip install --quiet markdown-it-py
 
+      # Without the token (a private repository on GitHub Free gets no
+      # organization secrets) this renders only, like the publisher skips a
+      # site whose token is missing, instead of failing the run.
       - name: Render and sync
+        id: sync
         env:
           MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
-        run: python3 "$PUBLISH" sync --mod mod --out out ${{ inputs.dry-run && '--dry-run' || '' }}
+          DRY_RUN: ${{ inputs.dry-run }}
+        run: |
+          modrinth="updated from README.md"
+          if [ "$DRY_RUN" = true ]; then
+            modrinth="not updated (dry run)"
+          elif [ -z "$MODRINTH_TOKEN" ]; then
+            modrinth="not updated: MODRINTH_TOKEN is not set"
+            echo "::warning::MODRINTH_TOKEN is not set, so Modrinth's description was not updated. Add it as a secret of this repository and re-run."
+            DRY_RUN=true
+          fi
+          echo "modrinth=$modrinth" >> "$GITHUB_OUTPUT"
+          python3 "$PUBLISH" sync --mod mod --out out $([ "$DRY_RUN" = true ] && echo --dry-run)
 
       - uses: actions/upload-artifact@v5
         with:
@@ -53,7 +68,7 @@ jobs:
           {
             echo "## Descriptions"
             echo
-            echo "- **Modrinth**: ${{ inputs.dry-run && 'not updated (dry run)' || 'updated from README.md' }}"
+            echo "- **Modrinth**: ${{ steps.sync.outputs.modrinth }}"
             echo "- **CurseForge**: download the **descriptions** artifact, open the project's description editor,"
             echo "  switch to *Source*/HTML and replace everything with \`curseforge.html\`."
             echo
