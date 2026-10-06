@@ -6,6 +6,7 @@ name: Join test
 #   - a Velox server (Velox + Celeris), a vanilla client (no NeoForge) -> joins
 #   - a Velox server (Velox + Celeris), a client with no mods       -> joins
 #   - a server with no mods, a Tessera client (Tessera + Celeris)    -> joins
+#   - Mojang's vanilla server, a Tessera client                      -> joins
 #   - Velox server and Tessera client together                       -> joins
 #   - the same with Celeris 0.2.0 (required network channel)         -> refused
 # The last two are controls: they show the test notices a refused connection.
@@ -133,9 +134,11 @@ jobs:
           scenarios = [
               {"name": "Velox server, client without mods", "server": [celeris, velox], "client": [], "expect": "join"},
               {"name": "server without mods, Tessera client", "server": [], "client": [celeris, tessera], "expect": "join"},
+              {"name": "vanilla server, Tessera client", "server_loader": "vanilla", "client": [celeris, tessera], "expect": "join"},
               {"name": "Velox server, Tessera client", "server": [celeris, velox], "client": [celeris, tessera], "expect": "join"},
               {"name": "control: Celeris 0.2.0 server, client without mods", "server": [old, velox], "client": [], "expect": "refused"},
               {"name": "control: server without mods, Celeris 0.2.0 client", "server": [], "client": [old, tessera], "expect": "refused"},
+              {"name": "control: vanilla server, Celeris 0.2.0 client", "server_loader": "vanilla", "client": [old, tessera], "expect": "refused"},
           ]
           if os.environ.get("NEOFORM"):
               scenarios.insert(0, {"name": "Velox server, vanilla client", "server": [celeris, velox],

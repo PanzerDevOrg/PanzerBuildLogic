@@ -13,7 +13,8 @@ scenarios.json is a list of
      "client_loader": "neoforge" | "vanilla"}
 
 A "vanilla" client is plain Minecraft, no NeoForge (ModDevGradle's NeoForm-only
-mode, --neoform <version>); it takes no mods.
+mode, --neoform <version>); it takes no mods. "server_loader": "vanilla" is
+Mojang's own server jar for --minecraft, also without mods.
 
 A scenario passes when the outcome is the expected one; "refused" scenarios are
 controls that show the check can fail (e.g. a mod with a required network
@@ -67,16 +68,16 @@ neoForge {
 
 
 class Server:
-    """A NeoForge dedicated server in `root`, its console mirrored to a log and scanned."""
+    """A dedicated server in `root` (NeoForge's run.sh, or Mojang's server.jar), its console mirrored to a log and scanned."""
 
-    def __init__(self, root: Path, env: dict):
-        self.root, self.env = root, env
+    def __init__(self, root: Path, env: dict, command: list[str]):
+        self.root, self.env, self.command = root, env, command
         self.lines: list[str] = []
         self.done = threading.Event()
         self.proc: subprocess.Popen | None = None
 
     def start(self, timeout: int) -> bool:
-        self.proc = subprocess.Popen(["bash", "run.sh", "nogui"], cwd=self.root, env=self.env, stdin=subprocess.PIPE,
+        self.proc = subprocess.Popen(self.command, cwd=self.root, env=self.env, stdin=subprocess.PIPE,
                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         threading.Thread(target=self._read, daemon=True).start()
         return self.done.wait(timeout)
@@ -109,14 +110,38 @@ def install_server(root: Path, neoforge: str, env: dict, work: Path) -> None:
                          cwd=root, env=env, capture_output=True, text=True)
     if out.returncode != 0:
         raise RuntimeError("NeoForge installer failed:\n" + out.stdout[-2000:] + out.stderr[-2000:])
+    write_server_files(root)
+    with open(root / "user_jvm_args.txt", "a", encoding="utf-8") as f:
+        f.write("\n-Xmx2G\n")
+
+
+VERSION_MANIFEST = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
+
+
+def install_vanilla_server(root: Path, minecraft: str, work: Path) -> None:
+    """Mojang's server jar for `minecraft`, from the launcher's version manifest."""
+    jar = work / f"minecraft-server-{minecraft}.jar"
+    if not jar.is_file():
+        with urllib.request.urlopen(VERSION_MANIFEST) as r:
+            versions = json.load(r)["versions"]
+        entry = next((v for v in versions if v["id"] == minecraft), None)
+        if entry is None:
+            raise RuntimeError(f"Minecraft {minecraft} is not in Mojang's version manifest")
+        with urllib.request.urlopen(entry["url"]) as r:
+            server = json.load(r)["downloads"]["server"]["url"]
+        urllib.request.urlretrieve(server, jar)
+    root.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(jar, root / "server.jar")
+    write_server_files(root)
+
+
+def write_server_files(root: Path) -> None:
     (root / "eula.txt").write_text("eula=true\n")
     (root / "server.properties").write_text("\n".join([
         "online-mode=false", "enforce-secure-profile=false", f"server-port={PORT}",
         "level-type=minecraft\\:flat", "spawn-npcs=false", "spawn-animals=false", "spawn-monsters=false",
         "generate-structures=false", "view-distance=4", "simulation-distance=4",
     ]) + "\n")
-    with open(root / "user_jvm_args.txt", "a", encoding="utf-8") as f:
-        f.write("\n-Xmx2G\n")
 
 
 def client_project(root: Path, loader: str, java: int) -> None:
@@ -174,8 +199,16 @@ def run_scenario(s: dict, args, work: Path) -> tuple[bool, list[str]]:
     server_env["PATH"] = f"{server_env['JAVA_HOME']}/bin{os.pathsep}{server_env['PATH']}"
     server_root = work / f"server-{name}"
     shutil.rmtree(server_root, ignore_errors=True)
-    install_server(server_root, args.neoforge, server_env, work)
-    put_mods(server_root / "mods", s.get("server", []))
+    vanilla_server = s.get("server_loader", "neoforge") == "vanilla"
+    if vanilla_server:
+        if s.get("server"):
+            return False, ["a vanilla server takes no mods"]
+        install_vanilla_server(server_root, args.minecraft, work)
+        command = ["java", "-Xmx2G", "-jar", "server.jar", "nogui"]
+    else:
+        install_server(server_root, args.neoforge, server_env, work)
+        put_mods(server_root / "mods", s.get("server", []))
+        command = ["bash", "run.sh", "nogui"]
     vanilla = s.get("client_loader", "neoforge") == "vanilla"
     if vanilla and not args.neoform:
         return False, ["a vanilla client needs --neoform"]
@@ -185,8 +218,9 @@ def run_scenario(s: dict, args, work: Path) -> tuple[bool, list[str]]:
     put_mods(client_root / "run" / "mods", s.get("client", []))
     shutil.rmtree(client_root / "run" / "logs", ignore_errors=True)
 
-    server = Server(server_root, server_env)
-    detail = [f"server mods: {', '.join(Path(j).name for j in s.get('server', [])) or 'none'};"
+    server = Server(server_root, server_env, command)
+    detail = [("vanilla server;" if vanilla_server else
+               f"server mods: {', '.join(Path(j).name for j in s.get('server', [])) or 'none'};")
               + (f" vanilla client (NeoForm {args.neoform})" if vanilla else
                  f" client mods: {', '.join(Path(j).name for j in s.get('client', [])) or 'none'}")]
     if not server.start(60 * 10):
