@@ -39,7 +39,7 @@ On a `v*` tag, the mod's CI (`mod-ci.yml`) builds its jars and calls `mod-releas
   none), sources jars, `SHA256SUMS.txt`, and the changelog with a "which file" table.
 - **Modrinth**: the universal jar per Minecraft range, `neoforge`, game versions,
   dependencies by project id, featured flag moved to the new version.
-- **CurseForge**: the same jar, with display name `<Mod> <version> for Minecraft <range>`,
+- **CurseForge**: the same jar, with display name `<version> <range>` (e.g. `0.2.2 1.21–1.21.6`),
   Minecraft versions, NeoForge, `Java 21`/`Java 25` and `Client`/`Server` tags all
   resolved against CurseForge's list first (an unknown one fails the release instead of
   being dropped), and dependencies by slug.

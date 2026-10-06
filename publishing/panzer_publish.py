@@ -401,7 +401,7 @@ def build_plan(cfg: ModConfig, dist: Path, tag: str | None) -> dict:
     for build in cfg.builds:
         build_jars = jars.get(build.name, {})
         label = range_label(build.game_versions)
-        display = f"{cfg.name} {cfg.version} for Minecraft {range_text(build.game_versions)}"
+        display = f"{cfg.version} {range_text(build.game_versions)}"  # e.g. "0.2.2 1.21–1.21.6"
         universal = build_jars.get("universal")
         entry = {
             "build": build.name,

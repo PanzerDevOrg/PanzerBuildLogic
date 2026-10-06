@@ -168,7 +168,7 @@ class Plan(unittest.TestCase):
     def test_files(self):
         f = self.plan["files"][0]
         self.assertEqual(f["version_number"], "1.2.0-1.21(.0-.1)")
-        self.assertEqual(f["display_name"], "Demo 1.2.0 for Minecraft 1.21–1.21.1")
+        self.assertEqual(f["display_name"], "1.2.0 1.21–1.21.1")
         self.assertTrue(f["universal"].endswith("demo-1.2.0+1.21.1.jar"))
         self.assertEqual(sorted(f["platforms"]), ["java", "linux", "windows"])
         self.assertTrue(f["sources"].endswith("-sources.jar"))
@@ -219,7 +219,7 @@ class Plan(unittest.TestCase):
         self.assertIn("demo-1.2.0+26.1-java.jar", (out / "SHA256SUMS.txt").read_text())
         self.assertFalse(Path("SHA256SUMS.txt").exists(), "nothing is written outside --out")
         self.assertTrue((out / "preview.html").exists())
-        self.assertIn("modrinth: create Demo 1.2.0", (out / "publish.log").read_text())
+        self.assertIn("modrinth: create 1.2.0 1.21–1.21.1", (out / "publish.log").read_text())
 
     def test_missing_site_token_skips_that_site(self):
         out = Path(self.tmp.name) / "out-real"
