@@ -95,6 +95,8 @@ class ModConfig:
     dependencies: list[Dependency]
     builds: list[Build]
     branch: str
+    source_url: str = ""
+    issues_url: str = ""
 
     @property
     def release_type(self) -> str:
@@ -212,6 +214,9 @@ def load_config(root: Path) -> ModConfig:
         dependencies=dependencies,
         builds=builds,
         branch=publish.get("branch", "master"),
+        # Project links on Modrinth; "" leaves one out (a private repository has none to show).
+        source_url=str(publish.get("source_url", f"https://github.com/{github}")),
+        issues_url=str(publish.get("issues_url", mod.get("issues", ""))),
     )
 
 
@@ -716,7 +721,10 @@ def sync_modrinth(cfg: ModConfig, body: str, dry: bool, log) -> None:
         log("modrinth: no project id, skipping description")
         return
     patch = {"body": body, "client_side": cfg.client_side, "server_side": cfg.server_side}
-    log(f"modrinth: PATCH project {cfg.modrinth_id} (body {len(body)} chars, client {cfg.client_side}, server {cfg.server_side})")
+    links = {"source_url": cfg.source_url, "issues_url": cfg.issues_url}
+    patch.update({k: v for k, v in links.items() if v})
+    log(f"modrinth: PATCH project {cfg.modrinth_id} (body {len(body)} chars, client {cfg.client_side}, "
+        f"server {cfg.server_side}" + "".join(f", {k} {v}" for k, v in links.items() if v) + ")")
     if not dry:
         token = os.environ.get("MODRINTH_TOKEN")
         if not token:
