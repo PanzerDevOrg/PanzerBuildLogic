@@ -278,6 +278,25 @@ configurations {
     named("testRuntimeClasspath") { extendsFrom(configurations["runtimeClasspath"]) }
 }
 
+/**
+ * A dependency's runtime-requirements file: under META-INF/, or at the jar root
+ * where Celeris 0.2.0 - 0.2.2 put it.
+ */
+fun isRuntimeRequirements(entryName: String): Boolean =
+    entryName.endsWith("-runtime-requirements.properties") &&
+            (entryName.startsWith("META-INF/") || '/' !in entryName)
+
+/**
+ * Drops --enable-native-access from NeoForge run arguments. FML loads every mod
+ * as a named module in its own module layer. On Java 21, once the flag is on
+ * the command line, restricted FFM calls from any module it does not list throw
+ * IllegalCallerException, and no value can list a mod (the JVM only matches
+ * boot-layer modules), so it switched Celeris's native physics and zstd off.
+ * On Java 22+ it only covers class-path code, which a mod is not.
+ */
+fun withoutNativeAccess(args: List<String>): List<String> =
+    args.filterNot { it.startsWith("--enable-native-access") }
+
 fun collectPropagatedJvmArgs(project: Project): Provider<List<String>> {
     val runtimeClasspath = project.configurations.findByName("runtimeClasspath")
         ?: return project.provider { emptyList() }
@@ -293,7 +312,7 @@ fun collectPropagatedJvmArgs(project: Project): Provider<List<String>> {
             runCatching {
                 ZipFile(file).use { zip ->
                     zip.entries().asSequence()
-                        .filter { it.name.startsWith("META-INF/") && it.name.endsWith("-runtime-requirements.properties") }
+                        .filter { isRuntimeRequirements(it.name) }
                         .forEach { entry ->
                             val props = Properties().apply { zip.getInputStream(entry).use { load(it) } }
                             props.getProperty("jvm.args")
@@ -312,8 +331,8 @@ fun collectPropagatedJvmArgs(project: Project): Provider<List<String>> {
 
 afterEvaluate {
     val runtimeModules = modProps.jvmModules.values.filter { it.addToRuntime }
-    val ownArgs = runtimeModules.flatMap { it.jvmRunArgs() }
-    val propagatedArgsProvider = collectPropagatedJvmArgs(project)
+    val ownArgs = withoutNativeAccess(runtimeModules.flatMap { it.jvmRunArgs() })
+    val propagatedArgsProvider = collectPropagatedJvmArgs(project).map(::withoutNativeAccess)
 
     neoForge {
         runs {
