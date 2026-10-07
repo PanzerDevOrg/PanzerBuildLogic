@@ -25,7 +25,9 @@ import os
 import random
 import re
 import shutil
+import subprocess
 import sys
+from collections import Counter
 import time
 from pathlib import Path
 
@@ -97,6 +99,40 @@ class Console:
         return float(m.group(2).replace(",", ".")) if m else None
 
 
+def server_pid() -> str | None:
+    """The running server's JVM (run.sh starts it with @user_jvm_args.txt; one server at a time)."""
+    out = subprocess.run(["pgrep", "-f", "user_jvm_args.txt"], capture_output=True, text=True).stdout.split()
+    return out[-1] if out else None
+
+
+def jcmd(java: int, pid: str, *command: str) -> None:
+    subprocess.run([f"{java_home(java)}/bin/jcmd", pid, *command], capture_output=True, text=True, timeout=120)
+
+
+FRAME = re.compile(r"^\s+(\S+)\(.*\)\s+line:")
+
+
+def hot_methods(java: int, recording: Path, top: int = 25) -> list[tuple[str, float, float]]:
+    """(method, % of samples on top of the stack, % anywhere in the stack) from a JFR file."""
+    out = subprocess.run([f"{java_home(java)}/bin/jfr", "print", "--events", "jdk.ExecutionSample", "--stack-depth", "64",
+                          str(recording)], capture_output=True, text=True).stdout
+    self_count, total_count, samples = Counter(), Counter(), 0
+    for event in out.split("jdk.ExecutionSample")[1:]:
+        if "Server thread" not in event:
+            continue
+        frames = [m.group(1) for m in map(FRAME.match, event.splitlines()) if m]
+        if not frames:
+            continue
+        samples += 1
+        self_count[frames[0]] += 1
+        for f in set(frames):
+            total_count[f] += 1
+    if not samples:
+        return []
+    return [(m, 100 * self_count[m] / samples, 100 * total_count[m] / samples)
+            for m, _ in self_count.most_common(top)]
+
+
 def measure(config: dict, args, work: Path, base: Path) -> dict:
     name = re.sub(r"[^\w.-]+", "-", config["name"])
     root = work / f"server-{name}"
@@ -122,6 +158,9 @@ def measure(config: dict, args, work: Path, base: Path) -> dict:
         console.sync()
         console.sprint(200)  # JIT and chunk loading warm-up
         idle = console.sprint(args.idle_ticks)
+        pid = server_pid() if args.jfr else None
+        if pid:
+            jcmd(args.java, pid, "JFR.start", "name=mspt", "settings=profile")
         for count in args.items:
             run = {"items": count, "idle_ms": idle}
             console.send("kill @e[type=minecraft:item]")
@@ -135,6 +174,10 @@ def measure(config: dict, args, work: Path, base: Path) -> dict:
             run["resting_ms"] = console.sprint(args.resting_ticks)
             result["runs"].append(run)
             print(f"  {config['name']}: {run}", flush=True)
+        if pid:
+            recording = root / "mspt.jfr"
+            jcmd(args.java, pid, "JFR.stop", "name=mspt", f"filename={recording}")
+            result["hot"] = hot_methods(args.java, recording)
         console.send("kill @e[type=minecraft:item]")
         engine = [line for line in server.lines if "Velox: items simulated" in line or "physics engine" in line.lower()]
         if engine:
@@ -162,6 +205,12 @@ def table(results: list[dict], header: str) -> list[str]:
                 cells.append(text)
             out.append(f"| {count:,} | {res['config']} | " + " | ".join(cells) + " |")
     for res in results:
+        if res.get("hot"):
+            out += ["", f"<details><summary>{res['config']}: where the server thread spends its time (JFR)</summary>", "",
+                    "| Method | Self | Total |", "|---|---|---|"]
+            out += [f"| `{m}` | {s:.1f}% | {t:.1f}% |" for m, s, t in res["hot"]]
+            out += ["", "</details>"]
+    for res in results:
         if res.get("error"):
             out.append(f"\n**{res['config']}**: {res['error']}")
         if res.get("engine"):
@@ -180,6 +229,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--falling-ticks", type=int, default=80)
     p.add_argument("--resting-ticks", type=int, default=1200)
     p.add_argument("--seed", type=int, default=7)
+    p.add_argument("--jfr", action="store_true", help="profile the server thread with Java Flight Recorder during the runs")
     p.add_argument("--work", required=True, type=Path)
     p.add_argument("--summary", type=Path)
     args = p.parse_args(argv)

@@ -110,7 +110,7 @@ jobs:
           python3 panzer-build-logic/tools/panzer_mspt.py --minecraft "${{ matrix.target.minecraft }}" \
             --neoforge "${{ matrix.target.neoforge }}" --java "${{ matrix.target.java }}" \
             --mods "$PWD/$celeris" "$PWD/$velox" --items ${{ inputs.items }} \
-            --work mspt --summary "$GITHUB_STEP_SUMMARY"
+            --work mspt --jfr --summary "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v5
         if: always()
@@ -120,4 +120,5 @@ jobs:
             mspt/mspt.json
             mspt/server-*/logs/
             mspt/server-*/join-console.log
+            mspt/server-*/mspt.jfr
           if-no-files-found: ignore
