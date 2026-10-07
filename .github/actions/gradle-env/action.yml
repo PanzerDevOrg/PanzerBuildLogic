@@ -1,0 +1,58 @@
+name: Gradle environment
+description: >
+  The JDKs a mod build needs (Zulu, newest last so it runs Gradle), GRADLE_JDKS
+  naming them to Gradle's toolchain resolver, and the Gradle caches. Used from a
+  checkout of this repository (uses: ./panzer-build-logic/.github/actions/gradle-env),
+  so every workflow gets it at the same build-logic ref.
+inputs:
+  java:
+    description: Java versions, whitespace-separated, oldest first (the last one runs Gradle)
+    default: "21 25"
+  cache-key:
+    description: Key of the dependency cache (Minecraft/NeoForge/Fabric, Maven dependencies, Gradle distribution)
+    required: true
+runs:
+  using: composite
+  steps:
+    # Zulu, because panzer.neoforge-mod asks for Azul toolchains: with the JDKs
+    # Gradle needs already installed (and named to it), it never downloads one.
+    - id: list
+      shell: bash
+      env:
+        JAVAS: ${{ inputs.java }}
+      run: |
+        {
+          echo "versions<<EOF"
+          printf '%s\n' $JAVAS
+          echo "EOF"
+        } >> "$GITHUB_OUTPUT"
+    - uses: actions/setup-java@v5
+      with:
+        distribution: zulu
+        java-version: ${{ steps.list.outputs.versions }}
+    - shell: bash
+      env:
+        JAVAS: ${{ inputs.java }}
+      run: echo "GRADLE_JDKS=-Porg.gradle.java.installations.fromEnv=$(printf '%s\n' $JAVAS | sed 's/.*/JAVA_HOME_&_X64/' | paste -sd, -)" >> "$GITHUB_ENV"
+    # Downloads (Minecraft/NeoForge per version through ModDevGradle's
+    # neoformruntime, Loom's Minecraft jars, dependencies, the wrapper's
+    # distribution): fetched again only when versions or plugins change.
+    - uses: actions/cache@v4
+      with:
+        path: |
+          ~/.gradle/caches/modules-2
+          ~/.gradle/caches/neoformruntime
+          ~/.gradle/caches/fabric-loom
+          ~/.gradle/wrapper/dists
+        key: gradle-${{ runner.os }}-${{ inputs.cache-key }}
+        restore-keys: gradle-${{ runner.os }}-
+    # Task outputs (org.gradle.caching=true in the shared gradle.properties):
+    # unchanged versions compile and test from cache. A new entry per run so the
+    # cache follows the code; Gradle drops entries unused for a week.
+    - uses: actions/cache@v4
+      with:
+        path: ~/.gradle/caches/build-cache-1
+        key: gradle-build-${{ runner.os }}-${{ inputs.cache-key }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        restore-keys: |
+          gradle-build-${{ runner.os }}-${{ inputs.cache-key }}-
+          gradle-build-${{ runner.os }}-

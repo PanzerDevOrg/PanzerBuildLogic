@@ -24,18 +24,32 @@ object TomlBlockReader {
     private val TABLE_HEADER = Regex("""^\[([^]]+)]\s*$""")
     private val KEY_VALUE = Regex("""^([A-Za-z0-9_.-]+)\s*=\s*(.+)$""")
 
+    /**
+     * Last parse per file, keyed by its text: the build reads the merged TOML from
+     * many places per subproject and configuration pass, and the text comparison
+     * keeps every read fresh after an edit (unlike Stonecutter's daemon-wide cache).
+     */
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, Pair<String, List<Table>>>()
+
     fun parse(file: File): List<Table> {
         if (!file.exists()) return emptyList()
+        val lines = readLinesWithRetry(file)
+        val text = lines.joinToString("\n")
+        val key = file.absolutePath
+        cache[key]?.let { (cachedText, tables) -> if (cachedText == text) return tables }
+        return parseLines(lines).also { cache[key] = text to it }
+    }
 
+    private fun parseLines(lines: List<String>): List<Table> {
         val tables = mutableListOf<Table>()
         var currentPath: List<String>? = null
         var currentEntries = mutableMapOf<String, String>()
 
         fun flush() {
-            currentPath?.let { tables += Table(it, currentEntries) }
+            currentPath?.let { tables += Table(it, currentEntries.toMap()) }
         }
 
-        for (rawLine in readLinesWithRetry(file)) {
+        for (rawLine in lines) {
             val line = rawLine.trim()
             if (line.isEmpty() || line.startsWith("#")) continue
 

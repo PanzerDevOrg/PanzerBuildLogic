@@ -90,21 +90,10 @@ jobs:
           repository: PanzerDevOrg/Tessera
           path: tessera
           persist-credentials: false
-      - uses: actions/setup-java@v5
+      - name: JDKs and Gradle caches
+        uses: ./panzer-build-logic/.github/actions/gradle-env
         with:
-          distribution: zulu
-          java-version: |
-            21
-            25
-      - run: echo "GRADLE_JDKS=-Porg.gradle.java.installations.fromEnv=JAVA_HOME_21_X64,JAVA_HOME_25_X64" >> "$GITHUB_ENV"
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches/modules-2
-            ~/.gradle/caches/neoformruntime
-            ~/.gradle/wrapper/dists
-          key: gradle-join-${{ runner.os }}-${{ matrix.target.version }}
-          restore-keys: gradle-${{ runner.os }}-
+          cache-key: join-${{ matrix.target.version }}
 
       - name: Build Celeris, Velox and Tessera for ${{ matrix.target.version }}
         run: |

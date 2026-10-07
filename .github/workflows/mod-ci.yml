@@ -213,30 +213,11 @@ jobs:
           path: panzer-build-logic
           persist-credentials: false
 
-      # Zulu, because panzer.neoforge-mod asks for Azul toolchains: with the
-      # JDKs Gradle needs already installed (and named to it), it never
-      # downloads one (cdn.azul.com timeouts used to fail builds).
-      - name: Set up JDKs
-        uses: actions/setup-java@v5
+      - name: JDKs and Gradle caches
+        uses: ./panzer-build-logic/.github/actions/gradle-env
         with:
-          distribution: zulu
-          java-version: ${{ needs.plan.outputs.java }}
-      - name: Point Gradle at them
-        env:
-          JAVAS: ${{ needs.plan.outputs.java }}
-        run: echo "GRADLE_JDKS=-Porg.gradle.java.installations.fromEnv=$(printf '%s\n' $JAVAS | sed 's/.*/JAVA_HOME_&_X64/' | paste -sd, -)" >> "$GITHUB_ENV"
-
-      # Minecraft/NeoForge per version (ModDevGradle's neoformruntime cache),
-      # dependencies and the Gradle distribution, kept between runs: only a
-      # change of versions or plugins downloads them again.
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches/modules-2
-            ~/.gradle/caches/neoformruntime
-            ~/.gradle/wrapper/dists
-          key: gradle-${{ runner.os }}-${{ needs.plan.outputs.cache-key }}
-          restore-keys: gradle-${{ runner.os }}-
+          java: ${{ needs.plan.outputs.java }}
+          cache-key: ${{ needs.plan.outputs.cache-key }}
 
       # [depends_on.<id>] ci_build_from_source: that mod's default branch,
       # published to mavenLocal (which the build resolves first), for
@@ -359,26 +340,11 @@ jobs:
           ref: ${{ inputs.build-logic-ref }}
           path: panzer-build-logic
           persist-credentials: false
-      - uses: actions/setup-java@v5
+      - name: JDKs and Gradle caches
+        uses: ./panzer-build-logic/.github/actions/gradle-env
         with:
-          distribution: zulu
-          java-version: ${{ needs.plan.outputs.java }}
-      - name: Point Gradle at the JDKs
-        env:
-          JAVAS: ${{ needs.plan.outputs.java }}
-        run: echo "GRADLE_JDKS=-Porg.gradle.java.installations.fromEnv=$(printf '%s\n' $JAVAS | sed 's/.*/JAVA_HOME_&_X64/' | paste -sd, -)" >> "$GITHUB_ENV"
-
-      # Minecraft/NeoForge per version (ModDevGradle's neoformruntime cache),
-      # dependencies and the Gradle distribution, kept between runs: only a
-      # change of versions or plugins downloads them again.
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches/modules-2
-            ~/.gradle/caches/neoformruntime
-            ~/.gradle/wrapper/dists
-          key: gradle-${{ runner.os }}-${{ needs.plan.outputs.cache-key }}
-          restore-keys: gradle-${{ runner.os }}-
+          java: ${{ needs.plan.outputs.java }}
+          cache-key: ${{ needs.plan.outputs.cache-key }}
       - name: Download native builds
         if: needs.plan.outputs.has-natives == 'true'
         uses: actions/download-artifact@v5
