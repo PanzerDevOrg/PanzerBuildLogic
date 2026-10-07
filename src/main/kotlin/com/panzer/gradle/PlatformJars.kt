@@ -3,7 +3,7 @@
 package com.panzer.gradle
 
 import org.gradle.api.Project
-import org.gradle.api.tasks.bundling.Jar
+import org.gradle.api.tasks.bundling.AbstractArchiveTask
 import org.gradle.api.tasks.bundling.Zip
 
 /**
@@ -33,7 +33,7 @@ object PlatformJars {
         val unknown = platforms.filterNot { it in SUPPORTED }
         require(unknown.isEmpty()) { "[publish] platforms $unknown are not supported; use any of $SUPPORTED" }
 
-        val jar = project.tasks.named(ModPackaging.releaseJar(project), Jar::class.java)
+        val jar = project.tasks.named(ModPackaging.releaseJar(project), AbstractArchiveTask::class.java)
         val outDir = project.rootProject.layout.buildDirectory.dir("libs/$modVersion")
         val tasks = platforms.map { platform ->
             project.tasks.register("${platform}Jar", Zip::class.java) {
