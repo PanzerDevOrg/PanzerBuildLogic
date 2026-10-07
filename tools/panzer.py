@@ -18,6 +18,7 @@
   panzer versions prefetch         download and decompile every version once, for all mods
   panzer versions status|clean     local cache size; remove NeoForge versions no mod uses
   panzer versions neoforge [1.21]  NeoForge builds published per Minecraft version (to bump the matrix)
+  panzer versions fabric [1.21]    Fabric API per Minecraft version, newest Fabric Loader and Loom
   panzer compat plan|run           check a built jar on the other Minecraft versions it claims
   panzer ci plan|verify-jars ...   used by .github/workflows/mod-ci.yml
 
@@ -275,6 +276,9 @@ def cmd_versions(args) -> int:
     if action == "neoforge":
         print("\n".join(pv.neoforge_table(values[0] if values else None)))
         return 0
+    if action == "fabric":
+        print("\n".join(pv.fabric_table(values[0] if values else None)))
+        return 0
     mods = [load_mod(p) for p in resolve_mods(args.mod or [], not args.mod)]
     if action == "list":
         names = [m.name for m in mods]
@@ -404,7 +408,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("publish", help="release publisher (see publishing/README.md)", add_help=False)
     s = sub.add_parser("versions", help="Minecraft versions and their local cache")
     s.add_argument("action", nargs="?", default="list",
-                   choices=["list", "use", "all", "prefetch", "status", "clean", "neoforge"])
+                   choices=["list", "use", "all", "prefetch", "status", "clean", "neoforge", "fabric"])
     s.add_argument("values", nargs="*", help="versions (use, prefetch; neoforge: oldest Minecraft to list, default 1.21)")
     s.add_argument("--mod", action="append", help="mod path or key (repeatable; default every local checkout)")
     s.add_argument("--no-switch", action="store_true", help="use: keep Stonecutter's active version")

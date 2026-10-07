@@ -1,0 +1,28 @@
+name: Versions
+
+# What NeoForge and Fabric have published per Minecraft version (for bumping
+# the version matrix in common.stonecutter.properties.toml), from a runner
+# that reaches both mavens: `panzer versions neoforge` and `panzer versions fabric`.
+on:
+  workflow_dispatch:
+    inputs:
+      since:
+        description: Oldest Minecraft version to list
+        type: string
+        default: "1.21"
+
+permissions:
+  contents: read
+
+jobs:
+  versions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - env:
+          SINCE: ${{ inputs.since }}
+        run: |
+          {
+            echo "## NeoForge"; echo '```'; python3 tools/panzer.py versions neoforge "$SINCE"; echo '```'
+            echo "## Fabric"; echo '```'; python3 tools/panzer.py versions fabric "$SINCE"; echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"

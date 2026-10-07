@@ -256,3 +256,52 @@ def neoforge_table(since: str | None = None, metadata_xml: str | None = None) ->
         note = "" if used is None else used + ("" if used in (r.latest, r.stable) else " (newer available)")
         lines.append(f"{r.minecraft:10} {r.count:>6}  {r.latest:22} {r.stable or '-':16} {note}".rstrip())
     return lines
+
+
+# --------------------------------------------------------------------------- Fabric releases
+
+FABRIC_API_METADATA = "https://maven.fabricmc.net/net/fabricmc/fabric-api/fabric-api/maven-metadata.xml"
+FABRIC_LOADER_META = "https://meta.fabricmc.net/v2/versions/loader"
+FABRIC_LOOM_METADATA = "https://maven.fabricmc.net/net/fabricmc/fabric-loom/maven-metadata.xml"
+
+
+def fabric_api_releases(metadata_xml: str) -> dict[str, list[str]]:
+    """Fabric API builds per Minecraft version (oldest build first): versions read
+    `<api>+<minecraft>`, e.g. 0.116.7+1.21.1."""
+    groups: dict[str, list[str]] = {}
+    for version in re.findall(r"<version>([^<]+)</version>", metadata_xml):
+        api, _, minecraft = version.partition("+")
+        if minecraft and re.fullmatch(r"\d+(\.\d+)+", minecraft):
+            groups.setdefault(minecraft, []).append(version)
+    return {mc: sorted(v, key=lambda x: _order(x.partition("+")[0])) for mc, v in groups.items()}
+
+
+def _fetch(url: str) -> str:
+    import urllib.request
+    try:
+        with urllib.request.urlopen(url, timeout=30) as response:
+            return response.read().decode("utf-8")
+    except OSError as e:
+        raise PanzerError(f"cannot read {url}: {e}") from e
+
+
+def fabric_table(since: str | None = None, api_xml: str | None = None, loader_json: str | None = None,
+                 loom_xml: str | None = None) -> list[str]:
+    """`panzer versions fabric`: newest Fabric API per Minecraft version from `since`
+    (default 1.21) on, plus the newest stable Fabric Loader and Loom."""
+    import json as _json
+    floor = _mc_order(since or "1.21")
+    api = fabric_api_releases(api_xml if api_xml is not None else _fetch(FABRIC_API_METADATA))
+    loaders = _json.loads(loader_json if loader_json is not None else _fetch(FABRIC_LOADER_META))
+    stable_loader = next((l["version"] for l in loaders if l.get("stable")), loaders[0]["version"] if loaders else "-")
+    looms = [v for v in re.findall(r"<version>([^<]+)</version>",
+                                   loom_xml if loom_xml is not None else _fetch(FABRIC_LOOM_METADATA))
+             if "SNAPSHOT" not in v]
+    loom = sorted(looms, key=_order)[-1] if looms else "-"
+    lines = [f"fabric loader (newest stable): {stable_loader}", f"fabric loom (newest): {loom}",
+             f"{'minecraft':10} {'builds':>6}  fabric api (newest)"]
+    for mc in sorted(api, key=_mc_order):
+        if _mc_order(mc) < floor:
+            continue
+        lines.append(f"{mc:10} {len(api[mc]):>6}  {api[mc][-1]}")
+    return lines
