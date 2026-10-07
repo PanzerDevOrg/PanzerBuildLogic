@@ -62,6 +62,16 @@ class PublishError(Exception):
 # --------------------------------------------------------------------------- config
 
 
+# Per loader: display name, CurseForge loader tag, and the dependencies every
+# file of that loader has on top of [publish.dependencies] (Fabric API).
+LOADERS = {
+    "neoforge": {"name": "NeoForge", "curseforge": "NeoForge", "modrinth_deps": [], "curseforge_deps": []},
+    "fabric": {"name": "Fabric", "curseforge": "Fabric",
+               "modrinth_deps": [{"project_id": "P7dR8mSH", "dependency_type": "required"}],
+               "curseforge_deps": [{"slug": "fabric-api", "type": "requiredDependency"}]},
+}
+
+
 @dataclasses.dataclass
 class Dependency:
     mod_id: str
@@ -76,6 +86,7 @@ class Build:
     name: str  # Stonecutter build, e.g. "1.21.1"
     game_versions: list[str]
     java: int
+    loader: str = "neoforge"  # neoforge / fabric; Fabric builds are named "<version>-fabric"
 
 
 @dataclasses.dataclass
@@ -185,6 +196,10 @@ def load_config(root: Path) -> ModConfig:
             raise PublishError(f"[publish.dependencies.{dep_id}] type {dtype!r} unknown")
         dependencies.append(Dependency(dep_id, dtype, dep.get("modrinth"), dep.get("curseforge"), dep.get("github")))
 
+    loaders = list((data.get("stonecutter") or {}).get("loaders") or ["neoforge"])
+    unknown = [l for l in loaders if l not in LOADERS]
+    if unknown:
+        raise PublishError(f"[stonecutter] loaders {unknown} unknown; use any of {list(LOADERS)}")
     builds = []
     for build in versions:
         block = data.get(build) or {}
@@ -194,7 +209,9 @@ def load_config(root: Path) -> ModConfig:
             raise PublishError(f'["{build}"] minecraft_version_range starts at {lower} but game_versions at {gv[0]}')
         if block.get("minecraft_version", build) not in gv:
             raise PublishError(f'["{build}"] builds against {block.get("minecraft_version", build)}, which is not in game_versions {gv}')
-        builds.append(Build(build, gv, int(block.get("java", java_for(build)))))
+        for loader in loaders:
+            name = build if loader == "neoforge" else f"{build}-{loader}"
+            builds.append(Build(name, gv, int(block.get("java", java_for(build))), loader))
     if not builds:
         raise PublishError("[stonecutter] versions is empty")
 
@@ -371,7 +388,7 @@ def lint_readme(readme: str) -> list[str]:
 def find_jars(dist: Path, cfg: ModConfig) -> dict[str, dict[str, Path]]:
     """{build: {"universal": jar, "sources": jar, "<os>": jar}} from the collected jars."""
     found: dict[str, dict[str, Path]] = {}
-    pattern = re.compile(rf"^{re.escape(cfg.mod_id)}-{re.escape(cfg.version)}\+(?P<build>[0-9][^-]*)(?:-(?P<cls>[a-z0-9_]+))?\.jar$")
+    pattern = re.compile(rf"^{re.escape(cfg.mod_id)}-{re.escape(cfg.version)}\+(?P<build>[0-9][^-]*(?:-fabric)?)(?:-(?P<cls>[a-z0-9_]+))?\.jar$")
     for jar in sorted(dist.rglob("*.jar")):
         m = pattern.match(jar.name)
         if not m:
@@ -398,16 +415,24 @@ def build_plan(cfg: ModConfig, dist: Path, tag: str | None) -> dict:
     jars = find_jars(dist, cfg) if dist and dist.exists() else {}
 
     files = []
+    several_loaders = len({b.loader for b in cfg.builds}) > 1
     for build in cfg.builds:
         build_jars = jars.get(build.name, {})
+        loader = LOADERS[build.loader]
         label = range_label(build.game_versions)
         display = f"{cfg.version} {range_text(build.game_versions)}"  # e.g. "0.2.2 1.21–1.21.6"
+        number = f"{cfg.version}-{label}"
+        if several_loaders:  # e.g. "0.2.3 1.21.1 Fabric" / "0.2.3-1.21.1-fabric"
+            display += f" {loader['name']}"
+            if build.loader != "neoforge":  # NeoForge keeps the numbers published before Fabric
+                number += f"-{build.loader}"
         universal = build_jars.get("universal")
         entry = {
             "build": build.name,
+            "loader": build.loader,
             "game_versions": build.game_versions,
             "java": build.java,
-            "version_number": f"{cfg.version}-{label}",
+            "version_number": number,
             "display_name": display,
             "universal": str(universal) if universal else None,
             "universal_sha256": sha256(universal) if universal else None,
@@ -426,14 +451,12 @@ def build_plan(cfg: ModConfig, dist: Path, tag: str | None) -> dict:
         "readme_warnings": lint_readme(readme),
         "modrinth": {
             "project": cfg.modrinth_id,
-            "loaders": ["neoforge"],
             "dependencies": [{"project_id": d.modrinth, "dependency_type": d.type}
                              for d in cfg.dependencies if d.modrinth],
         },
         "curseforge": {
             "project": cfg.curseforge_id,
             "slug": cfg.curseforge_slug,
-            "loader": "NeoForge",
             "environments": cfg.curseforge_environments,
             "relations": [{"slug": d.curseforge, "type": {"required": "requiredDependency",
                                                           "optional": "optionalDependency",
@@ -553,7 +576,7 @@ class CurseForgeVersions:
     def ids(self, file: dict, plan: dict, errors: list[str]) -> list[int]:
         out = []
         wanted = [(v, "minecraft") for v in file["game_versions"]]
-        wanted.append((plan["curseforge"]["loader"], "modloader"))
+        wanted.append((LOADERS[file["loader"]]["curseforge"], "modloader"))
         wanted.append((f"Java {file['java']}", "java"))
         wanted += [(e, "environment") for e in plan["curseforge"]["environments"]]
         for name, prefix in wanted:
@@ -614,7 +637,8 @@ def publish_modrinth(plan: dict, dry: bool, log, out: Path) -> None:
                        {"Authorization": token})
         # Only the newest version per Minecraft range stays featured.
         for old in existing:
-            if old.get("featured") and set(old["game_versions"]) <= set(f["game_versions"]):
+            if (old.get("featured") and set(old["game_versions"]) <= set(f["game_versions"])
+                    and set(old.get("loaders", [])) <= {f["loader"]}):
                 log(f"modrinth: unfeature {old['version_number']}")
                 http_json("PATCH", f"{MODRINTH_API}/version/{old['id']}", token, {"featured": False})
 
@@ -625,10 +649,10 @@ def modrinth_payload(plan: dict, f: dict) -> dict:
         "name": f["display_name"],
         "version_number": f["version_number"],
         "changelog": plan["changelog"],
-        "dependencies": plan["modrinth"]["dependencies"],
+        "dependencies": plan["modrinth"]["dependencies"] + LOADERS[f["loader"]]["modrinth_deps"],
         "game_versions": f["game_versions"],
         "version_type": plan["mod"]["release_type"],
-        "loaders": plan["modrinth"]["loaders"],
+        "loaders": [f["loader"]],
         "featured": True,
         "file_parts": ["file"],
         "primary_file": "file",
@@ -643,8 +667,9 @@ def curseforge_payload(plan: dict, f: dict, version_ids: list[int]) -> dict:
         "gameVersions": version_ids,
         "releaseType": plan["mod"]["release_type"],
     }
-    if plan["curseforge"]["relations"]:
-        payload["relations"] = {"projects": plan["curseforge"]["relations"]}
+    relations = plan["curseforge"]["relations"] + LOADERS[f["loader"]]["curseforge_deps"]
+    if relations:
+        payload["relations"] = {"projects": relations}
     return payload
 
 
@@ -766,14 +791,15 @@ def preview_html(plan: dict, modrinth_md: str, cf_html: str) -> str:
     mod = plan["mod"]
     rows = []
     for f in plan["files"]:
-        cf_tags = f["game_versions"] + [plan["curseforge"]["loader"], f"Java {f['java']}"] + plan["curseforge"]["environments"]
+        loader = LOADERS[f["loader"]]
+        cf_tags = f["game_versions"] + [loader["curseforge"], f"Java {f['java']}"] + plan["curseforge"]["environments"]
         rows.append(
             "<tr>"
             f"<td><b>{html.escape(f['display_name'])}</b><br><code>{html.escape(f['version_number'])}</code></td>"
             f"<td>{html.escape(Path(f['universal']).name) if f['universal'] else '<i>not built</i>'}</td>"
-            f"<td>{html.escape(', '.join(f['game_versions']))}<br>loader: neoforge<br>"
-            f"deps: {html.escape(json.dumps(plan['modrinth']['dependencies']))}</td>"
-            f"<td>{html.escape(', '.join(cf_tags))}<br>relations: {html.escape(json.dumps(plan['curseforge']['relations']))}</td>"
+            f"<td>{html.escape(', '.join(f['game_versions']))}<br>loader: {f['loader']}<br>"
+            f"deps: {html.escape(json.dumps(plan['modrinth']['dependencies'] + loader['modrinth_deps']))}</td>"
+            f"<td>{html.escape(', '.join(cf_tags))}<br>relations: {html.escape(json.dumps(plan['curseforge']['relations'] + loader['curseforge_deps']))}</td>"
             f"<td>{'<br>'.join(html.escape(Path(p).name) for p in github_assets({'files': [f]})) or '<i>none</i>'}</td>"
             "</tr>")
     warnings = "".join(f'<div class="warn">README: {html.escape(w)}</div>' for w in plan["readme_warnings"])

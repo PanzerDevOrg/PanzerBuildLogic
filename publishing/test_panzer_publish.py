@@ -242,3 +242,50 @@ class Plan(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FabricPlan(unittest.TestCase):
+    """[stonecutter] loaders = ["neoforge", "fabric"]: one file per loader and build."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = make_mod(Path(self.tmp.name))
+        toml = root / "mod.stonecutter.properties.toml"
+        toml.write_text(toml.read_text().replace('vcs_version = "1.21.1"', 'vcs_version = "1.21.1"\nloaders = ["neoforge", "fabric"]'))
+        libs = root / "build" / "libs" / "1.2.0"
+        for build in ("1.21.1", "26.1"):
+            for suffix in ("", "-sources", "-windows"):
+                with zipfile.ZipFile(libs / f"demo-1.2.0+{build}-fabric{suffix}.jar", "w") as z:
+                    z.writestr("x.txt", build + suffix)
+        self.cfg = pp.load_config(root)
+        self.plan = pp.build_plan(self.cfg, root / "build" / "libs", "v1.2.0")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_files_per_loader(self):
+        files = {f["build"]: f for f in self.plan["files"]}
+        self.assertEqual(sorted(files), ["1.21.1", "1.21.1-fabric", "26.1", "26.1-fabric"])
+        neo, fabric = files["1.21.1"], files["1.21.1-fabric"]
+        self.assertEqual(neo["version_number"], "1.2.0-1.21(.0-.1)")  # unchanged from NeoForge-only releases
+        self.assertEqual(fabric["version_number"], "1.2.0-1.21(.0-.1)-fabric")
+        self.assertEqual(fabric["display_name"], "1.2.0 1.21–1.21.1 Fabric")
+        self.assertTrue(neo["universal"].endswith("demo-1.2.0+1.21.1.jar"))
+        self.assertTrue(fabric["universal"].endswith("demo-1.2.0+1.21.1-fabric.jar"))
+        self.assertTrue(fabric["sources"].endswith("demo-1.2.0+1.21.1-fabric-sources.jar"))
+        self.assertEqual(list(fabric["platforms"]), ["windows"])
+        self.assertEqual(pp.check_plan(self.plan, online=False), [])
+
+    def test_sites_get_the_loader_and_fabric_api(self):
+        fabric = next(f for f in self.plan["files"] if f["build"] == "1.21.1-fabric")
+        data = pp.modrinth_payload(self.plan, fabric)
+        self.assertEqual(data["loaders"], ["fabric"])
+        self.assertIn({"project_id": "P7dR8mSH", "dependency_type": "required"}, data["dependencies"])
+        neo = pp.modrinth_payload(self.plan, self.plan["files"][0])
+        self.assertEqual(neo["loaders"], ["neoforge"])
+        self.assertNotIn("P7dR8mSH", json.dumps(neo))
+        payload = pp.curseforge_payload(self.plan, fabric, [])
+        self.assertIn({"slug": "fabric-api", "type": "requiredDependency"}, payload["relations"]["projects"])
+        errors = []
+        FakeCurseForge().ids(fabric, self.plan, errors)
+        self.assertIn("CurseForge has no modloader version 'Fabric' (1.21.1-fabric)", errors)
