@@ -62,6 +62,37 @@ def native_matrix(mod: Mod) -> list[dict]:
     return entries
 
 
+# Bump to rebuild every cached native library (e.g. after changing how
+# mod-ci.yml builds them).
+NATIVES_CACHE_SALT = "natives-v1"
+_SKIPPED_DIRS = {".git", "build", "out", "__pycache__"}
+
+
+def natives_key(mod: Mod, matrix: list[dict]) -> str:
+    """Cache key of everything CI builds from source under [natives.*]: the
+    build matrix and every file of each library's cmake_dir, ci_prepare and
+    ci_linux_script. Unchanged sources reuse the previous build."""
+    import hashlib
+    digest = hashlib.sha256(NATIVES_CACHE_SALT.encode())
+    digest.update(json.dumps(matrix, sort_keys=True).encode())
+    roots: set[Path] = set()
+    for spec in mod.natives.values():
+        for key in ("cmake_dir", "ci_prepare", "ci_linux_script"):
+            if spec.get(key):
+                roots.add(mod.root / spec[key])
+    files: set[Path] = set()
+    for root in roots:
+        if root.is_file():
+            files.add(root)
+        elif root.is_dir():
+            files.update(f for f in root.rglob("*")
+                         if f.is_file() and not _SKIPPED_DIRS.intersection(f.relative_to(root).parts))
+    for f in sorted(files):
+        digest.update(f.relative_to(mod.root).as_posix().encode() + b"\0")
+        digest.update(f.read_bytes())
+    return f"natives-{mod.id}-{digest.hexdigest()[:20]}"
+
+
 def cache_key(mod: Mod, versions: list[str]) -> str:
     """Identifies what the build downloads: Minecraft/NeoForge per version, the
     ModDevGradle and Stonecutter plugins and the Gradle distribution."""
@@ -101,6 +132,7 @@ def plan(mod: Mod, requested: str = "") -> dict:
         "version": mod.version,
         "natives": json.dumps({"include": natives}),
         "has-natives": str(bool(natives)).lower(),
+        "natives-key": natives_key(mod, natives) if natives else "",
         "strict-natives": str(bool(mod.natives)).lower(),
         "java": "\n".join(str(j) for j in javas),
         "source-deps": json.dumps(source_deps),

@@ -8,7 +8,9 @@ name: Mod CI (reusable)
 #            mod's shared files differ from panzer-build-logic (`panzer check`)
 #   natives  every CMake-backed [natives.<name>] platform, built and self-tested
 #            on its own runner (ci_linux_script: all Linux platforms in one job,
-#            ci_prepare: run first, e.g. to vendor sources)
+#            ci_prepare: run first, e.g. to vendor sources). Skipped when the
+#            native sources are unchanged since a build cached on master; a
+#            v* tag always builds them afresh.
 #   build    every Minecraft version with tests; universal, per-system and
 #            sources jars, verified (tools/panzer.py ci verify-jars)
 #   maven    v* tags with [publish] maven_pages = true: the mod's static Maven
@@ -55,6 +57,8 @@ jobs:
       version: ${{ steps.plan.outputs.version }}
       natives: ${{ steps.plan.outputs.natives }}
       has-natives: ${{ steps.plan.outputs.has-natives }}
+      natives-key: ${{ steps.plan.outputs.natives-key }}
+      natives-cached: ${{ steps.natives-cache.outputs.cache-hit == 'true' }}
       strict-natives: ${{ steps.plan.outputs.strict-natives }}
       java: ${{ steps.plan.outputs.java }}
       source-deps: ${{ steps.plan.outputs.source-deps }}
@@ -104,9 +108,20 @@ jobs:
         continue-on-error: true
         run: python3 "$PANZER" check mod --ci
 
+      # Native builds of these exact sources, if a run already cached them.
+      # Never for a release tag: what it publishes is built from the tag.
+      - name: Cached native builds
+        id: natives-cache
+        if: steps.plan.outputs.has-natives == 'true' && !startsWith(github.ref, 'refs/tags/')
+        uses: actions/cache/restore@v4
+        with:
+          path: native-out
+          key: ${{ steps.plan.outputs.natives-key }}
+          lookup-only: true
+
   natives:
     needs: plan
-    if: needs.plan.outputs.has-natives == 'true'
+    if: needs.plan.outputs.has-natives == 'true' && needs.plan.outputs.natives-cached != 'true'
     name: native ${{ matrix.lib }} ${{ matrix.key }}
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -257,22 +272,47 @@ jobs:
             echo "::endgroup::"
           done
 
+      - name: Restore cached native builds
+        if: needs.plan.outputs.natives-cached == 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: native-out
+          key: ${{ needs.plan.outputs.natives-key }}
+          fail-on-cache-miss: true
       - name: Download native builds
-        if: needs.plan.outputs.has-natives == 'true'
+        if: needs.plan.outputs.has-natives == 'true' && needs.plan.outputs.natives-cached != 'true'
         uses: actions/download-artifact@v5
         with:
           pattern: native-${{ needs.plan.outputs.mod-id }}-*
           merge-multiple: true
-          path: mod
+          path: native-out
+      - name: Cache native builds
+        if: needs.plan.outputs.has-natives == 'true' && needs.plan.outputs.natives-cached != 'true'
+        uses: actions/cache/save@v4
+        continue-on-error: true
+        with:
+          path: native-out
+          key: ${{ needs.plan.outputs.natives-key }}
+      - name: Stage native builds
+        if: needs.plan.outputs.has-natives == 'true'
+        run: cp -R ../native-out/. .
 
       # [ci] display = true: game clients (self-tests) need a screen and OpenGL:
       # a virtual X server, and Mesa's llvmpipe (OpenGL 4.5 in software).
+      # The runner image usually has all of it already: install only what is
+      # missing, and refresh the package index only if that install fails.
       - name: Virtual display
         if: needs.plan.outputs.display == 'true'
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq xvfb libgl1-mesa-dri libglx-mesa0 mesa-utils > /dev/null
-          xvfb-run -a -s "-screen 0 1280x720x24" glxinfo -B | grep -E "OpenGL (renderer|core profile version)" || true
+          missing=()
+          for pkg in xvfb libgl1-mesa-dri libglx-mesa0; do
+            dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "ok installed" || missing+=("$pkg")
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "Installing ${missing[*]}"
+            sudo apt-get install -y -qq --no-install-recommends "${missing[@]}" > /dev/null ||
+              { sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends "${missing[@]}" > /dev/null; }
+          fi
 
       - name: Gradle ${{ needs.plan.outputs.gradle-tasks }}
         env:

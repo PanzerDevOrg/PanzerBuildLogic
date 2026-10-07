@@ -238,27 +238,6 @@ overridden in the mod's block, at the cost of its own download.
 The version Stonecutter has active is always configured, even outside the subset.
 CI ignores `.panzer/versions`.
 
-### Porting: reading another version's code
-
-`tools/mc_probe.py` answers questions about one Minecraft/NeoForge version from its
-decompiled sources, without setting that version up locally. A mod's private
-`mc-probe` workflow (`workflow_dispatch`: `neoforge` version and `queries`) builds the
-patched game jar with ModDevGradle, decompiles it with Vineflower when there are no
-sources, adds NeoForge's own sources jar, and prints the answers in its log:
-
-| Query | Answer |
-|---|---|
-| `class net.minecraft.world.entity.Entity` | the whole source file |
-| `method net.minecraft.world.entity.Entity#move` | every declaration of `move`, with its body |
-| `grep <regex> [<path prefix>]` | matching lines (`path:line: text`), at most 300; no spaces in the regex (use `\s+`) |
-| `find <regex>` | source paths matching |
-| `sig <class>` | `javap -p` of the compiled class |
-| `file <path>` | any file in the game jars: shaders, JSON, lang files |
-| `neoforge [<minecraft>]` | same as `panzer versions neoforge`, from the runner (for networks without NeoForge's maven) |
-
-Queries go one per line (or separated by `;;`). The workflow lives in a private
-repository because its log is decompiled game code.
-
 ### Claiming more versions: `panzer compat`
 
 One jar per build version may serve several Minecraft versions (`game_versions`

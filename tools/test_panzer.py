@@ -187,6 +187,18 @@ class Ci(unittest.TestCase):
         self.assertEqual(json.loads(plan["source-deps"]), [{"id": "celeris", "repo": "PanzerDevOrg/Celeris", "versions": "1.21.1,26.1"}])
         self.assertEqual(plan["has-natives"], "true")
 
+    def test_natives_key_follows_native_sources(self):
+        key = panzer_ci.plan(self.mod)["natives-key"]
+        self.assertTrue(key.startswith("natives-demo-"))
+        self.assertEqual(key, panzer_ci.plan(load_mod(self.root))["natives-key"])
+        cmake_dir = self.root / next(s["cmake_dir"] for s in self.mod.natives.values() if s.get("cmake_dir"))
+        cmake_dir.mkdir(parents=True, exist_ok=True)
+        (cmake_dir / "build").mkdir(exist_ok=True)
+        (cmake_dir / "build" / "junk.o").write_text("ignored")
+        self.assertEqual(key, panzer_ci.plan(load_mod(self.root))["natives-key"], "build output is not a source")
+        (cmake_dir / "kernel.c").write_text("int x;")
+        self.assertNotEqual(key, panzer_ci.plan(load_mod(self.root))["natives-key"])
+
     def write_jars(self, natives_in_universal: list[str]):
         libs = self.root / "build" / "libs" / "1.0.0"
         libs.mkdir(parents=True)
@@ -401,61 +413,6 @@ class Versions(unittest.TestCase):
     def test_cli_list(self):
         self.assertEqual(panzer.main(["versions", "list", "--mod", str(self.root)]), 0)
         self.assertEqual(panzer.main(["versions", "use", "--mod", str(self.root)]), 2)
-
-
-class Probe(unittest.TestCase):
-    def test_method_declarations(self):
-        from mc_probe import methods
-        src = textwrap.dedent("""
-            class A {
-               @Nullable
-               @Override
-               public BlockState set(BlockPos pos, int flags) {
-                  return null;
-               }
-
-               public @Nullable BlockState set(BlockPos pos, @Block.UpdateFlags int flags) {
-                  if (x) { y("}"); }
-                  return state;
-               }
-
-               void other() { this.set(a, 3); }
-            }
-        """)
-        hits = methods(src, "set")
-        self.assertEqual([line for line, _ in hits], [3, 9])
-        self.assertEqual(hits[1][1][-1].strip(), "}")
-        self.assertEqual(len(hits[1][1]), 4)
-
-    def test_several_sources_jars(self):
-        import mc_probe
-        with tempfile.TemporaryDirectory() as tmp:
-            jars = []
-            for i, content in enumerate(["class A { void a() {} }", "class B { void b() {} }"]):
-                path = Path(tmp) / f"s{i}.jar"
-                with zipfile.ZipFile(path, "w") as z:
-                    z.writestr(f"p/{'AB'[i]}.java", content)
-                    z.writestr("p/Shared.java", f"// from jar {i}")
-                jars.append(zipfile.ZipFile(path))
-            src = mc_probe.Sources(jars)
-            self.assertEqual(src.names, {"p/A.java", "p/B.java", "p/Shared.java"})
-            self.assertEqual(src.read("p/B.java").decode(), "class B { void b() {} }")
-            self.assertEqual(src.read("p/Shared.java").decode(), "// from jar 0")
-
-    def test_file_query_reads_any_jar(self):
-        import subprocess, sys
-        with tempfile.TemporaryDirectory() as tmp:
-            sources, binary = Path(tmp) / "s.jar", Path(tmp) / "b.jar"
-            with zipfile.ZipFile(sources, "w") as z:
-                z.writestr("a/A.java", "class A {}")
-            with zipfile.ZipFile(binary, "w") as z:
-                z.writestr("assets/minecraft/shaders/core/x.fsh", "void main() {}")
-            out = subprocess.run([sys.executable, str(Path(__file__).with_name("mc_probe.py")),
-                                  "--sources", str(sources), "--binary", str(binary),
-                                  "--query", "file assets/minecraft/shaders/core/x.fsh;;file core/x.fsh"],
-                                 capture_output=True, text=True, check=True).stdout
-            self.assertIn("void main() {}", out)
-            self.assertIn("same name: assets/minecraft/shaders/core/x.fsh", out)
 
 
 class New(unittest.TestCase):
