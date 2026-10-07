@@ -49,6 +49,11 @@ data class ModBuildProperties(
     val modId: String,
     val modVersion: String,
     val modGroup: String,
+    /**
+     * The Stonecutter node being built: the Minecraft version for NeoForge
+     * ("1.21.1"), `<version>-fabric` for Fabric. Used wherever builds must not
+     * collide: jar versions, run directories, `{mc}` in dependency artifacts.
+     */
     val currentVersion: String,
     val requiredJava: JavaVersion,
     val neoVersion: String,
@@ -62,7 +67,14 @@ data class ModBuildProperties(
     val natives: Map<String, NativeLibrarySpec> = emptyMap(),
     /** Per-system jars from `[publish] platforms` (see [PlatformJars]). */
     val publishPlatforms: List<String> = emptyList(),
+    /** "neoforge" or "fabric" (nodes named `<version>-fabric`). */
+    val loader: String = "neoforge",
+    /** Fabric only: `[fabric] loader_version` and the version's `fabric_api_version`. */
+    val fabricLoaderVersion: String = "",
+    val fabricApiVersion: String = "",
 ) {
+    val isFabric: Boolean get() = loader == "fabric"
+
     companion object {
         /**
          * Gradle-property prefix that lets a single build turn an optional JVM
@@ -155,11 +167,12 @@ data class ModBuildProperties(
             fun overrideOrOptional(key: String, default: String = ""): String =
                 overrides[key] ?: optional(key, default)
 
+            val fabric = sc.current.project.endsWith("-fabric")
             return ModBuildProperties(
                 modId = modId,
                 modVersion = req("mod.version"),
                 modGroup = req("mod.group"),
-                currentVersion = sc.current.version,
+                currentVersion = sc.current.project,
                 requiredJava = requiredJava,
                 neoVersion = overrideOrReq("neo_version"),
                 mcVersion = overrideOrReq("minecraft_version"),
@@ -169,6 +182,9 @@ data class ModBuildProperties(
                 jvmModules = jvmModules,
                 natives = NativeLibrarySpec.from(tables),
                 publishPlatforms = PlatformJars.parseList(TomlBlockReader.find(tables, "publish")?.entries?.get("platforms")),
+                loader = if (fabric) "fabric" else "neoforge",
+                fabricLoaderVersion = if (fabric) req("fabric.loader_version") else "",
+                fabricApiVersion = if (fabric) overrideOrReq("fabric_api_version") else "",
             )
         }
 

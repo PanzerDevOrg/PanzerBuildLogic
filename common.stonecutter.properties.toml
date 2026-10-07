@@ -2,6 +2,7 @@
 stonecutter = "0.9.7"
 foojay = "1.0.0"
 moddev = "2.0.143"
+loom = "1.18.3"
 
 [dependencies]
 junit = "6.1.3"
@@ -20,6 +21,13 @@ assets = "CC-BY-NC-SA-4.0"
 [neoforge]
 loader_version_range = "[4,)"
 
+# Fabric builds (mods with [stonecutter] loaders = ["neoforge", "fabric"]):
+# one "<version>-fabric" node per Minecraft version, built with Fabric Loom
+# (Mojang's names) against Fabric Loader and the version's fabric_api_version.
+# `panzer versions fabric` lists what Fabric has published.
+[fabric]
+loader_version = "0.19.5"
+
 [tools.oxipng]
 version = "10.1.1"
 enabled = true
@@ -35,25 +43,31 @@ enabled = true
 #   1.21.10 : Java 21, NeoForge 21.10
 #   1.21.11 : Java 21, NeoForge 21.11 (ResourceLocation renamed to Identifier)
 #   26.1    : Java 25, NeoForge 26.1 (unobfuscated game jar, no Parchment)
+#
+# fabric_api_version: the Fabric API the version's "-fabric" node builds against.
 
 ["1.21.1"]
 minecraft_version = "1.21.1"
 neo_version = "21.1.248"
 parchment_mappings_version = "2024.11.17"
+fabric_api_version = "0.116.17+1.21.1"
 
 ["1.21.10"]
 minecraft_version = "1.21.10"
 neo_version = "21.10.64"
 parchment_mappings_version = "2025.10.12"
+fabric_api_version = "0.138.4+1.21.10"
 
 ["1.21.11"]
 minecraft_version = "1.21.11"
 neo_version = "21.11.45"
 parchment_mappings_version = "2025.12.20"
+fabric_api_version = "0.141.6+1.21.11"
 
 ["26.1"]
 minecraft_version = "26.1"
 neo_version = "26.1.0.19-beta"
+fabric_api_version = "0.145.1+26.1"
 
 # [overrides.<mod_id>."<mc_version>"] overrides the ["<mc_version>"] block above,
 # field by field, for that mod_id only (a mod can also just set the key in its

@@ -11,7 +11,9 @@ import org.gradle.api.Project
  * itself rewrites when the active version changes.
  *
  * Swaps `mod_version` / `minecraft` (string literals for the version being
- * built) and constant `release` (false only for the "template" mod id).
+ * built) and constants `release` (false only for the "template" mod id),
+ * `fabric` and `neoforge` (the node's loader: `<version>-fabric` nodes build
+ * for Fabric), so loader-specific code reads `//? if fabric {`.
  */
 class PanzerStonecutterPlugin : Plugin<Project> {
 
@@ -28,6 +30,9 @@ class PanzerStonecutterPlugin : Plugin<Project> {
             swaps.put("mod_version", "\"$modVersion\";")
             swaps.put("minecraft", "\"${node.metadata.version}\";")
             constants.put("release", modId != "template")
+            val fabric = node.metadata.project.endsWith("-${PanzerSettingsPlugin.FABRIC}")
+            constants.put(PanzerSettingsPlugin.FABRIC, fabric)
+            constants.put(PanzerSettingsPlugin.NEOFORGE, !fabric)
         }
     }
 }

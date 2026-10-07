@@ -48,9 +48,45 @@ object ModPackaging {
             for (table in tables.filter { it.path.size == 2 && it.path[0] == "depends_on" }) {
                 val id = table.path[1]
                 table.entries["version"]?.let { put("${id}_version", it) }
-                table.entries["version_range"]?.let { put("${id}_version_range", it) }
+                table.entries["version_range"]?.let {
+                    put("${id}_version_range", it)
+                    put("${id}_fabric_version_range", fabricRange(it))
+                }
+            }
+            // fabric.mod.json: the same ranges as Fabric version predicates.
+            put("fabric_minecraft_version_range", fabricRange(props.req(project, "minecraft_version_range")))
+            if (props.isFabric) {
+                put("fabric_loader_version", props.fabricLoaderVersion)
+                put("fabric_api_version", props.fabricApiVersion)
             }
         }
+
+    /**
+     * A Maven version range as a Fabric version predicate: `[1.21,1.21.7)` is
+     * `>=1.21 <1.21.7`, `[1.21.11]` is `1.21.11`, `[0.2.1,)` is `>=0.2.1`.
+     */
+    fun fabricRange(maven: String): String {
+        val raw = maven.trim()
+        if (raw.isEmpty() || raw == "*") return "*"
+        if (raw[0] != '[' && raw[0] != '(') return raw
+        val open = raw[0]
+        val close = raw.last()
+        val inner = raw.substring(1, raw.length - 1)
+        if (',' !in inner) return inner.trim()
+        val (low, high) = inner.split(',', limit = 2).map { it.trim() }
+        val parts = buildList {
+            if (low.isNotEmpty()) add((if (open == '[') ">=" else ">") + low)
+            if (high.isNotEmpty()) add((if (close == ']') "<=" else "<") + high)
+        }
+        return parts.joinToString(" ").ifEmpty { "*" }
+    }
+
+    /** The jar a release ships: Loom's remapped jar for obfuscated Fabric builds, otherwise `jar`. */
+    fun releaseJar(project: Project): String =
+        if (project.tasks.names.contains("remapJar")) "remapJar" else "jar"
+
+    fun releaseSourcesJar(project: Project): String =
+        if (project.tasks.names.contains("remapSourcesJar")) "remapSourcesJar" else "sourcesJar"
 
     fun resources(project: Project, props: ModBuildProperties, tables: List<TomlBlockReader.Table>) {
         val legal = legalFiles(project)
@@ -59,6 +95,9 @@ object ModPackaging {
             val values = modsTomlProperties(project, props, tables)
             values.forEach { (key, value) -> inputs.property(key, value) }
             filesMatching("META-INF/neoforge.mods.toml") { expand(values) }
+            filesMatching("fabric.mod.json") { expand(values) }
+            // Each loader's jar carries only its own metadata.
+            if (props.isFabric) exclude("META-INF/neoforge.mods.toml") else exclude("fabric.mod.json")
             val mixinJava = "JAVA_${props.requiredJava.majorVersion}"
             inputs.property("mixin_java", mixinJava)
             filesMatching("*.mixins.json") { expand(mapOf("java" to mixinJava)) }
@@ -82,8 +121,8 @@ object ModPackaging {
         val collect = project.tasks.register("buildAndCollect", Copy::class.java) {
             group = "build"
             description = "Builds the mod, sources and per-system jars into build/libs/<mod version>/."
-            from(project.tasks.named("jar"))
-            from(project.tasks.named("sourcesJar"))
+            from(project.tasks.named(releaseJar(project)))
+            from(project.tasks.named(releaseSourcesJar(project)))
             inputs.property("version", props.modVersion)
             into(project.rootProject.layout.buildDirectory.dir("libs/${props.modVersion}"))
         }

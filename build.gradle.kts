@@ -16,6 +16,7 @@ repositories {
     maven("https://maven.kikugie.dev/releases") { name = "KikuGie Releases" }
     maven("https://maven.kikugie.dev/snapshots") { name = "KikuGie Snapshots" }
     maven("https://maven.neoforged.net/releases/") { name = "NeoForged" }
+    maven("https://maven.fabricmc.net/") { name = "Fabric" }
 }
 
 // Reads [plugins] from the common TOML, instead of duplicating the Stonecutter/ModDev
@@ -35,6 +36,7 @@ fun pluginVersion(key: String): String {
 dependencies {
     implementation("dev.kikugie.stonecutter:dev.kikugie.stonecutter.gradle.plugin:${pluginVersion("stonecutter")}")
     implementation("net.neoforged.moddev:net.neoforged.moddev.gradle.plugin:${pluginVersion("moddev")}")
+    implementation("net.fabricmc:fabric-loom:${pluginVersion("loom")}")
     implementation("org.gradle.toolchains:foojay-resolver:${pluginVersion("foojay")}")
     implementation("com.google.code.gson:gson:2.14.0")
 }
@@ -48,6 +50,10 @@ gradlePlugin {
         register("panzerSettings") {
             id = "panzer.settings"
             implementationClass = "com.panzer.gradle.PanzerSettingsPlugin"
+        }
+        register("panzerMod") {
+            id = "panzer.mod"
+            implementationClass = "com.panzer.gradle.PanzerModPlugin"
         }
         register("panzerStonecutter") {
             id = "panzer.stonecutter"

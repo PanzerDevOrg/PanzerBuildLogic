@@ -20,11 +20,19 @@ import java.io.File
  *    `-Pstonecutter.versions=a,b` narrows that list for one run.
  * 4. Creates the Stonecutter tree for the root project plus every project in
  *    `[stonecutter] branches = ["example"]`, and names the root project after
- *    `[mod] name`.
+ *    `[mod] name`. With `[stonecutter] loaders = ["neoforge", "fabric"]` every
+ *    Minecraft version gets a second node, `<version>-fabric` (the NeoForge
+ *    node keeps the plain version name); branches stay NeoForge-only.
+ *    `-Ppanzer.loaders=fabric` builds one loader only.
  * 5. Validates the merged TOML ([PanzerDiagnostics]) and reports every problem
  *    at once, before any project configures.
  */
 class PanzerSettingsPlugin : Plugin<Settings> {
+
+    companion object {
+        const val NEOFORGE = "neoforge"
+        const val FABRIC = "fabric"
+    }
 
     override fun apply(settings: Settings) {
         val rootDir = settings.rootDir
@@ -64,12 +72,19 @@ class PanzerSettingsPlugin : Plugin<Settings> {
         // out, the active version (always registered) stands in for it.
         val vcsVersion = if (configuredVcs in scVersions) configuredVcs else activeVersion(settings) ?: scVersions.first()
         val branches = PlatformJars.parseList(stonecutterTable.entries["branches"])
+        val nodes = nodes(settings, stonecutterTable, scVersions)
 
         branches.forEach { settings.include(":$it") }
-        val projects: List<Any> = listOf(settings.rootProject) + branches.map { settings.project(":$it") }
-        settings.extensions.getByType(StonecutterSettingsExtension::class.java).create(projects) {
-            versions(scVersions)
+        val stonecutter = settings.extensions.getByType(StonecutterSettingsExtension::class.java)
+        stonecutter.create(settings.rootProject) {
+            versions(nodes)
             this.vcsVersion.set(vcsVersion)
+        }
+        for (branch in branches) {
+            stonecutter.create(settings.project(":$branch")) {
+                versions(scVersions)
+                this.vcsVersion.set(vcsVersion)
+            }
         }
 
         TomlBlockReader.find(tables, "mod")?.entries?.get("name")?.takeIf { it.isNotBlank() }?.let {
@@ -77,6 +92,28 @@ class PanzerSettingsPlugin : Plugin<Settings> {
         }
 
         PanzerDiagnostics.validate(rootDir, mergedToml, scVersions).renderAndMaybeFail(rootDir.name)
+    }
+
+    /**
+     * Node name -> Minecraft version, in build order: for each version its
+     * NeoForge node (the plain version) and, when the mod builds for Fabric,
+     * `<version>-fabric`. `-Ppanzer.loaders=a,b` keeps only those loaders (the
+     * NeoForge node of the active version always stays: Stonecutter needs it).
+     */
+    private fun nodes(settings: Settings, stonecutter: TomlBlockReader.Table, versions: List<String>): Map<String, String> {
+        val declared = PlatformJars.parseList(stonecutter.entries["loaders"]).ifEmpty { listOf(NEOFORGE) }
+        val unknown = declared.filterNot { it == NEOFORGE || it == FABRIC }
+        if (unknown.isNotEmpty()) error("[panzer.settings] [stonecutter] loaders: unknown $unknown (neoforge, fabric).")
+        val requested = settings.startParameter.projectProperties["panzer.loaders"]
+            ?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
+        val loaders = requested?.let { r -> declared.filter { it in r } } ?: declared
+        val active = activeVersion(settings)
+        return buildMap {
+            for (version in versions) {
+                if (NEOFORGE in loaders || version == active) put(version, version)
+                if (FABRIC in loaders) put("$version-$FABRIC", version)
+            }
+        }
     }
 
     /**
