@@ -1,6 +1,6 @@
 # Panzer Build Logic
 
-Everything PanzerDevOrg's NeoForge mods share, in one repository: the Gradle build
+Everything PanzerDevOrg's NeoForge and Fabric mods share, in one repository: the Gradle build
 (Stonecutter multi-version setup, natives, packaging), the licenses and legal notices,
 the CI pipeline, the release publisher, and the files every mod repository carries
 (Gradle wrapper, settings, workflows). Change something here once; `panzer sync` (or
@@ -33,11 +33,14 @@ panzer-build-logic/
 │   ├── mods.yml                          # control center: sync / check / build / release every mod
 │   └── publish.yml                       # this repository's own CI and plugin publishing
 └── src/main/kotlin/
-    ├── panzer.neoforge-mod.gradle.kts           # main convention plugin
+    ├── panzer.mod-common.gradle.kts             # loader-independent part (toolchains, JVM modules, packaging, natives)
+    ├── panzer.neoforge-mod.gradle.kts           # NeoForge nodes (ModDevGradle)
+    ├── panzer.fabric-mod.gradle.kts             # Fabric nodes (Loom; remapping Loom for 1.21.x)
     ├── panzer.neoforge-mod-example.gradle.kts   # convention plugin for :example branches
     └── com/panzer/gradle/
         ├── PanzerSettingsPlugin.kt       # panzer.settings: TOML merge, versions, Stonecutter tree
-        ├── PanzerStonecutterPlugin.kt    # panzer.stonecutter: shared Stonecutter parameters
+        ├── PanzerModPlugin.kt            # panzer.mod: neoforge-mod or fabric-mod by node name
+        ├── PanzerStonecutterPlugin.kt    # panzer.stonecutter: shared Stonecutter parameters, `fabric`/`neoforge` constants
         ├── ModPackaging.kt               # mods.toml expansion, legal files, natives, buildAndCollect, [depends_on]
         ├── PlatformJars.kt               # per-system jars ([publish] platforms)
         ├── NativeLibraries.kt            # [natives.<name>] specs; CMakeBuildTask.kt builds them
@@ -142,11 +145,27 @@ a few lines) `includeBuild`s it and applies `panzer.settings`, which:
    tree for the root project plus `[stonecutter] branches = ["example"]`;
 4. validates the merged TOML and reports every problem at once.
 
-The mod's `build.gradle.kts` applies `panzer.neoforge-mod` and keeps only what is
+The mod's `build.gradle.kts` applies `panzer.mod` (or `panzer.neoforge-mod` for a
+NeoForge-only mod) and keeps only what is
 really its own (runs, extra tasks, publications). The plugin provides the rest:
 NeoForge/Parchment setup, Java toolchains, JVM modules, `neoforge.mods.toml` and mixin
 expansion (`mod_<key>` for every `[mod]` key, `mod_license`, version ranges,
 `<dep>_version_range`), the legal files, natives, per-system jars and `buildAndCollect`.
+
+### Fabric
+
+`[stonecutter] loaders = ["neoforge", "fabric"]` gives every Minecraft version a second
+Stonecutter node, `<version>-fabric`, built by `panzer.fabric-mod` with Fabric Loom
+(Mojang names; the remapping Loom turns 1.21.x jars into intermediary in `remapJar`,
+26.x is unobfuscated). Sources pick a loader with the `fabric`/`neoforge` constants
+(`//? if fabric {`, `//? if fabric && >=26.1 {`), `fabric.mod.json` is expanded like
+`neoforge.mods.toml` (`${fabric_minecraft_version_range}`, `${<dep>_fabric_version_range}`)
+and each loader's jar leaves out the other's metadata. Jars are named
+`<id>-<version>+<mc>-fabric.jar`; the publisher uploads them as separate Modrinth and
+CurseForge files with the Fabric loader tag and a required Fabric API dependency.
+`[fabric] loader_version` and each version's `fabric_api_version` live in the common TOML
+(`panzer versions fabric` lists the newest); `-Ppanzer.loaders=fabric` builds one loader
+only. Loom needs Gradle to run on Java 25, which CI already uses.
 
 ### Dependencies on other mods
 
@@ -234,6 +253,7 @@ overridden in the mod's block, at the cost of its own download.
 | `panzer versions prefetch [26.1]` | downloads and decompiles each version once (through the first mod that builds it) |
 | `panzer versions status` / `clean [--yes]` | cache sizes; removes NeoForge builds the matrix no longer uses |
 | `panzer versions neoforge [1.21]` | NeoForge builds published per Minecraft version (newest, newest stable), next to the matrix's; to add or bump a version |
+| `panzer versions fabric` | newest Fabric Loader, Loom and Fabric API per Minecraft version, next to the common TOML's |
 
 The version Stonecutter has active is always configured, even outside the subset.
 CI ignores `.panzer/versions`.
@@ -289,7 +309,10 @@ ref), Velox and Tessera for each build version, starts a NeoForge dedicated
 server and joins it with a real game client through Quick Play, under Xvfb:
 a Velox server with a vanilla client and with a client without mods, a server
 without mods and Mojang's vanilla server with a Tessera client, both together, plus controls with Celeris 0.2.0 (required
-channel) that must be refused. `tools/panzer_join.py --scenarios <json>` runs any
+channel) that must be refused. With Fabric builds it also joins a Fabric server
+(Fabric server launcher + Fabric API) with a Fabric client, a Velox (NeoForge)
+server with a Fabric client, and a Fabric server with a vanilla client, each
+checking that the log says "Celeris engine working". `tools/panzer_join.py --scenarios <json>` runs any
 other combination of server and client jars.
 
 ## Per-mod version overrides
