@@ -14,7 +14,12 @@ scenarios.json is a list of
 
 A "vanilla" client is plain Minecraft, no NeoForge (ModDevGradle's NeoForm-only
 mode, --neoform <version>); it takes no mods. "server_loader": "vanilla" is
-Mojang's own server jar for --minecraft, also without mods.
+Mojang's own server jar for --minecraft, also without mods. "server_loader" /
+"client_loader": "fabric" run Fabric Loader (--fabric-loader) with Fabric API
+(--fabric-api) added to the scenario's jars: the server through Fabric's server
+launcher, the client as a Fabric Loom run. "server_log": strings the server log
+must contain (e.g. a mod's startup line), or the scenario fails; "client_log"
+the same for the client.
 
 A scenario passes when the outcome is the expected one; "refused" scenarios are
 controls that show the check can fail (e.g. a mod with a required network
@@ -141,6 +146,30 @@ def install_vanilla_server(root: Path, minecraft: str, work: Path) -> None:
     write_server_files(root)
 
 
+FABRIC_META = "https://meta.fabricmc.net/v2/versions"
+FABRIC_MAVEN = "https://maven.fabricmc.net"
+
+
+def fabric_api_jar(version: str, work: Path) -> str:
+    jar = work / f"fabric-api-{version}.jar"
+    if not jar.is_file():
+        urllib.request.urlretrieve(f"{FABRIC_MAVEN}/net/fabricmc/fabric-api/fabric-api/{version}/fabric-api-{version}.jar", jar)
+    return str(jar)
+
+
+def install_fabric_server(root: Path, minecraft: str, loader: str, work: Path) -> None:
+    """Fabric's server launcher for `minecraft` + `loader`: on first start it downloads
+    Mojang's server jar and the loader's libraries, then runs the game."""
+    jar = work / f"fabric-server-{minecraft}-{loader}.jar"
+    if not jar.is_file():
+        with urllib.request.urlopen(f"{FABRIC_META}/installer") as r:
+            installer = next(i["version"] for i in json.load(r) if i.get("stable"))
+        urllib.request.urlretrieve(f"{FABRIC_META}/loader/{minecraft}/{loader}/{installer}/server/jar", jar)
+    root.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(jar, root / "fabric-server-launch.jar")
+    write_server_files(root)
+
+
 def write_server_files(root: Path) -> None:
     (root / "eula.txt").write_text("eula=true\n")
     (root / "server.properties").write_text("\n".join([
@@ -165,6 +194,60 @@ def client_project(root: Path, loader: str, java: int) -> None:
     (game / "options.txt").write_text("onboardAccessibility:false\nnarrator:0\npauseOnLostFocus:false\n")
 
 
+_FABRIC_SETTINGS = """pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        maven("https://maven.fabricmc.net/")
+    }
+}
+rootProject.name = "join-client-fabric"
+"""
+
+_FABRIC_BUILD = """plugins { id("%(plugin)s") version "%(loom)s" }
+java { toolchain { languageVersion = JavaLanguageVersion.of(%(java)d) } }
+dependencies {
+    minecraft("com.mojang:minecraft:%(minecraft)s")
+    %(mappings)s
+    %(conf)s("net.fabricmc:fabric-loader:%(loader)s")
+}
+loom {
+    runs {
+        named("client") {
+            runDir("run")
+            vmArg("-Xmx2G")
+            programArgs("--quickPlayMultiplayer", "localhost:%(port)d")
+        }
+    }
+}
+"""
+
+
+def loom_version() -> str:
+    for line in (BUILD_LOGIC / "common.stonecutter.properties.toml").read_text().splitlines():
+        if line.strip().startswith("loom"):
+            return line.split("=", 1)[1].strip().strip('"')
+    raise RuntimeError("[plugins] loom is missing in common.stonecutter.properties.toml")
+
+
+def fabric_client_project(root: Path, minecraft: str, loader: str, java: int) -> None:
+    """A Loom project whose client run joins localhost; mods go in run/mods (Fabric
+    Loader remaps release jars to the development names at launch)."""
+    root.mkdir(parents=True, exist_ok=True)
+    if not (root / "gradlew").is_file():
+        shutil.copy2(BUILD_LOGIC / "gradlew", root / "gradlew")
+        shutil.copytree(BUILD_LOGIC / "gradle", root / "gradle")
+    unobfuscated = int(minecraft.split(".")[0]) >= 26
+    (root / "settings.gradle.kts").write_text(_FABRIC_SETTINGS)
+    (root / "build.gradle.kts").write_text(_FABRIC_BUILD % {
+        "plugin": "net.fabricmc.fabric-loom" if unobfuscated else "net.fabricmc.fabric-loom-remap",
+        "loom": loom_version(), "java": java, "minecraft": minecraft, "loader": loader, "port": PORT,
+        "mappings": "" if unobfuscated else "mappings(loom.officialMojangMappings())",
+        "conf": "implementation" if unobfuscated else "modImplementation"})
+    game = root / "run"
+    game.mkdir(parents=True, exist_ok=True)
+    (game / "options.txt").write_text("onboardAccessibility:false\nnarrator:0\npauseOnLostFocus:false\n")
+
+
 def put_mods(mods: Path, jars: list[str]) -> None:
     shutil.rmtree(mods, ignore_errors=True)
     mods.mkdir(parents=True)
@@ -172,12 +255,13 @@ def put_mods(mods: Path, jars: list[str]) -> None:
         shutil.copy2(jar, mods / Path(jar).name)
 
 
-def start_client(root: Path, log: Path) -> subprocess.Popen:
-    env = dict(os.environ, JAVA_HOME=java_home(21))
+def start_client(root: Path, log: Path, fabric: bool = False) -> subprocess.Popen:
+    # Fabric Loom 1.18 itself needs Gradle on Java 25.
+    env = dict(os.environ, JAVA_HOME=java_home(25 if fabric else 21))
     env["PATH"] = f"{env['JAVA_HOME']}/bin{os.pathsep}{env['PATH']}"
     env.setdefault("SDL_VIDEO_FORCE_EGL", "1")
     jdks = ",".join(k for k in ("JAVA_HOME_21_X64", "JAVA_HOME_25_X64") if k in os.environ)
-    command = ["bash", "gradlew", "runJoin", "--no-daemon", "--console=plain", "--no-watch-fs"]
+    command = ["bash", "gradlew", "runClient" if fabric else "runJoin", "--no-daemon", "--console=plain", "--no-watch-fs"]
     if jdks:
         command.append(f"-Porg.gradle.java.installations.fromEnv={jdks}")
     if not os.environ.get("DISPLAY") and shutil.which("xvfb-run"):
@@ -186,7 +270,8 @@ def start_client(root: Path, log: Path) -> subprocess.Popen:
                             stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
 
 
-CLIENT_FATAL = ("Failed to start FML", "---- Minecraft Crash Report ----", "ModLoadingException")
+CLIENT_FATAL = ("Failed to start FML", "---- Minecraft Crash Report ----", "ModLoadingException",
+                "Incompatible mods found", "Mod resolution failed")
 
 
 def client_failed(log: Path) -> bool:
@@ -217,36 +302,50 @@ def run_scenario(s: dict, args, work: Path) -> tuple[bool, list[str]]:
     server_env["PATH"] = f"{server_env['JAVA_HOME']}/bin{os.pathsep}{server_env['PATH']}"
     server_root = work / f"server-{name}"
     shutil.rmtree(server_root, ignore_errors=True)
-    vanilla_server = s.get("server_loader", "neoforge") == "vanilla"
+    server_loader = s.get("server_loader", "neoforge")
+    vanilla_server = server_loader == "vanilla"
+    if (server_loader == "fabric" or s.get("client_loader") == "fabric") and not (args.fabric_loader and args.fabric_api):
+        return False, ["Fabric scenarios need --fabric-loader and --fabric-api"]
     if vanilla_server:
         if s.get("server"):
             return False, ["a vanilla server takes no mods"]
         install_vanilla_server(server_root, args.minecraft, work)
         command = ["java", "-Xmx2G", "-jar", "server.jar", "nogui"]
+    elif server_loader == "fabric":
+        install_fabric_server(server_root, args.minecraft, args.fabric_loader, work)
+        put_mods(server_root / "mods", [*s.get("server", []), fabric_api_jar(args.fabric_api, work)])
+        command = ["java", "-Xmx2G", "-jar", "fabric-server-launch.jar", "nogui"]
     else:
         install_server(server_root, args.neoforge, server_env, work)
         put_mods(server_root / "mods", s.get("server", []))
         command = ["bash", "run.sh", "nogui"]
-    vanilla = s.get("client_loader", "neoforge") == "vanilla"
+    client_loader = s.get("client_loader", "neoforge")
+    vanilla = client_loader == "vanilla"
+    fabric_client = client_loader == "fabric"
     if vanilla and not args.neoform:
         return False, ["a vanilla client needs --neoform"]
-    client_root = work / ("client-vanilla" if vanilla else "client")
-    client_project(client_root, f'neoFormVersion = "{args.neoform}"' if vanilla else f'version = "{args.neoforge}"',
-                   args.java)
-    put_mods(client_root / "run" / "mods", s.get("client", []))
+    if fabric_client:
+        client_root = work / "client-fabric"
+        fabric_client_project(client_root, args.minecraft, args.fabric_loader, args.java)
+        put_mods(client_root / "run" / "mods", [*s.get("client", []), fabric_api_jar(args.fabric_api, work)])
+    else:
+        client_root = work / ("client-vanilla" if vanilla else "client")
+        client_project(client_root, f'neoFormVersion = "{args.neoform}"' if vanilla else f'version = "{args.neoforge}"',
+                       args.java)
+        put_mods(client_root / "run" / "mods", s.get("client", []))
     shutil.rmtree(client_root / "run" / "logs", ignore_errors=True)
 
     server = Server(server_root, server_env, command)
     detail = [("vanilla server;" if vanilla_server else
-               f"server mods: {', '.join(Path(j).name for j in s.get('server', [])) or 'none'};")
+               f"{server_loader} server mods: {', '.join(Path(j).name for j in s.get('server', [])) or 'none'};")
               + (f" vanilla client (NeoForm {args.neoform})" if vanilla else
-                 f" client mods: {', '.join(Path(j).name for j in s.get('client', [])) or 'none'}")]
+                 f" {client_loader} client mods: {', '.join(Path(j).name for j in s.get('client', [])) or 'none'}")]
     if not server.start(60 * 10):
         server.stop()
         return False, detail + ["the server never finished starting", *server.lines[-15:]]
     client_log = work / f"client-{name}.log"
     seen = len(server.lines)  # only what happens once the client is on its way
-    client = start_client(client_root, client_log)
+    client = start_client(client_root, client_log, fabric_client)
     outcome, deadline = None, time.monotonic() + 60 * args.timeout_minutes
     try:
         while outcome is None and time.monotonic() < deadline:
@@ -272,6 +371,16 @@ def run_scenario(s: dict, args, work: Path) -> tuple[bool, list[str]]:
         tail = client_log.read_text(encoding="utf-8", errors="replace").splitlines()[-25:] if client_log.is_file() else []
         detail += [f"client: {outcome}", *tail]
     ok = outcome == s["expect"]
+    server_text = "\n".join(server.lines)
+    for wanted in s.get("server_log", []):
+        if wanted not in server_text:
+            ok = False
+            detail.append(f"server log lacks: {wanted}")
+    client_text = client_log.read_text(encoding="utf-8", errors="replace") if client_log.is_file() else ""
+    for wanted in s.get("client_log", []):
+        if wanted not in client_text:
+            ok = False
+            detail.append(f"client log lacks: {wanted}")
     detail.insert(0, f"outcome: {outcome} (expected {s['expect']})")
     return ok, detail
 
@@ -282,6 +391,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--neoforge", required=True)
     p.add_argument("--java", type=int, required=True)
     p.add_argument("--neoform", help="NeoForm version for vanilla clients")
+    p.add_argument("--fabric-loader", help="Fabric Loader version for Fabric scenarios")
+    p.add_argument("--fabric-api", help="Fabric API version for Fabric scenarios")
     p.add_argument("--scenarios", required=True, type=Path)
     p.add_argument("--work", required=True, type=Path)
     p.add_argument("--timeout-minutes", type=int, default=12, help="per client, from its launch")

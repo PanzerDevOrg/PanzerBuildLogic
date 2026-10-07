@@ -9,6 +9,11 @@ name: Join test
 #   - Mojang's vanilla server, a Tessera client                      -> joins
 #   - Velox server and Tessera client together                       -> joins
 #   - Celeris 0.2.0 alone (required network channel) on either side   -> refused
+#   Fabric (Celeris's "<version>-fabric" jar with Fabric API; the logs must show
+#   Celeris starting):
+#   - a Fabric server with Celeris, a vanilla client                 -> joins
+#   - a Fabric server with Celeris, a Fabric client with Celeris      -> joins
+#   - a Velox server (NeoForge), a Fabric client with Celeris         -> joins
 # The refused ones are controls: they show the test notices a refused connection.
 # They use Celeris alone because Velox and Tessera now require Celeris 0.2.1.
 on:
@@ -47,7 +52,9 @@ jobs:
               mc = block["minecraft_version"]
               neoform = [n for n in neoforms if n.split("-")[0] == mc]
               targets.append({"version": v, "minecraft": mc, "neoforge": block["neo_version"], "java": java,
-                              "neoform": neoform[-1] if neoform else ""})
+                              "neoform": neoform[-1] if neoform else "",
+                              "fabric_loader": common["fabric"]["loader_version"],
+                              "fabric_api": block.get("fabric_api_version", "")})
           print("targets=" + json.dumps(targets))
           PY
 
@@ -87,8 +94,8 @@ jobs:
         with:
           distribution: zulu
           java-version: |
-            25
             21
+            25
       - run: echo "GRADLE_JDKS=-Porg.gradle.java.installations.fromEnv=JAVA_HOME_21_X64,JAVA_HOME_25_X64" >> "$GITHUB_ENV"
       - uses: actions/cache@v4
         with:
@@ -122,6 +129,7 @@ jobs:
       - name: Scenarios
         env:
           NEOFORM: ${{ matrix.target.neoform }}
+          FABRIC_API: ${{ matrix.target.fabric_api }}
         run: |
           python3 - <<'PY'
           import glob, json, os
@@ -131,6 +139,7 @@ jobs:
               assert len(found) == 1, (mod, found)
               return os.path.abspath(found[0])
           celeris, velox, tessera = jar("celeris"), jar("velox"), jar("tessera")
+          fabric = glob.glob(f"celeris/build/libs/*/celeris-*+{v}-fabric.jar")
           old = os.path.abspath(f"old/celeris-0.2.0+{v}.jar")
           scenarios = [
               {"name": "Velox server, client without mods", "server": [celeris, velox], "client": [], "expect": "join"},
@@ -146,6 +155,19 @@ jobs:
                                    "client_loader": "vanilla", "expect": "join"})
               scenarios.append({"name": "control: Celeris 0.2.0 server, vanilla client", "server": [old],
                                 "client_loader": "vanilla", "expect": "refused"})
+          if fabric and os.environ.get("FABRIC_API"):
+              cf = os.path.abspath(fabric[0])
+              started = ["Celeris engine working"]
+              scenarios += [
+                  {"name": "Fabric server with Celeris, Fabric client with Celeris", "server_loader": "fabric",
+                   "server": [cf], "client_loader": "fabric", "client": [cf], "expect": "join",
+                   "server_log": started, "client_log": started},
+                  {"name": "Velox server, Fabric client with Celeris", "server": [celeris, velox],
+                   "client_loader": "fabric", "client": [cf], "expect": "join", "client_log": started},
+              ]
+              if os.environ.get("NEOFORM"):
+                  scenarios.append({"name": "Fabric server with Celeris, vanilla client", "server_loader": "fabric",
+                                    "server": [cf], "client_loader": "vanilla", "expect": "join", "server_log": started})
           json.dump(scenarios, open("scenarios.json", "w"), indent=1)
           print(json.dumps(scenarios, indent=1))
           PY
@@ -155,6 +177,7 @@ jobs:
           python3 panzer-build-logic/tools/panzer_join.py --minecraft "${{ matrix.target.minecraft }}" \
             --neoforge "${{ matrix.target.neoforge }}" --java "${{ matrix.target.java }}" \
             ${{ matrix.target.neoform && format('--neoform {0}', matrix.target.neoform) || '' }} \
+            --fabric-loader "${{ matrix.target.fabric_loader }}" --fabric-api "${{ matrix.target.fabric_api }}" \
             --scenarios scenarios.json --work join --summary "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v5
