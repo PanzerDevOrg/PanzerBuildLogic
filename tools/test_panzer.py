@@ -183,7 +183,7 @@ class Ci(unittest.TestCase):
         self.assertIn("natives/linux/aarch64/libdemo_native.so", linux["outputs"])
         win = next(e for e in matrix if e["key"] == "windows-x86_64")
         self.assertEqual((win["runner"], win["file"], win["prepare"]), ("windows-latest", "demo_native.dll", "native/fetch.sh"))
-        self.assertEqual(plan["java"], "25\n21")
+        self.assertEqual(plan["java"], "21\n25")
         self.assertEqual(json.loads(plan["source-deps"]), [{"id": "celeris", "repo": "PanzerDevOrg/Celeris", "versions": "1.21.1,26.1"}])
         self.assertEqual(plan["has-natives"], "true")
 
@@ -398,7 +398,7 @@ class Versions(unittest.TestCase):
         # the committed active version is always configured by Stonecutter
         self.assertEqual(plan["versions"], "1.21.1,26.1")
         self.assertEqual(plan["gradle-versions"], "-Pstonecutter.versions=26.1")
-        self.assertEqual(plan["java"], "25\n21")
+        self.assertEqual(plan["java"], "21\n25")
         with self.assertRaises(PanzerError):
             panzer_ci.plan(self.mod, "1.20.1")
 

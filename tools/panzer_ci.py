@@ -118,8 +118,10 @@ def plan(mod: Mod, requested: str = "") -> dict:
         versions = [v for v in mod.available_versions if v in wanted or v == active]
         gradle_versions = f"-Pstonecutter.versions={','.join(wanted)}"
     javas = sorted({java_for(mod.config.get(v, {}).get("minecraft_version", v)) for v in versions}, reverse=True)
-    # setup-java makes the last one the default JAVA_HOME (Gradle's own JVM): 21.
-    javas = [j for j in javas if j != 21] + [21]
+    # setup-java makes the last one the default JAVA_HOME, Gradle's own JVM: the
+    # newest (Fabric Loom 1.18 needs Gradle on Java 25); toolchains still compile
+    # each version with its own JDK.
+    javas = sorted(set(javas) | {21})
     source_deps = [
         {"id": dep_id, "repo": dep["repo"], "versions": ",".join(versions)}
         for dep_id, dep in mod.depends_on.items()
