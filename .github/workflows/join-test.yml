@@ -110,6 +110,8 @@ jobs:
         run: |
           set -euo pipefail
           for mod in celeris velox tessera; do
+            # The shared settings of this build logic (repositories its plugins need).
+            cp panzer-build-logic/shared/mod/settings.gradle.kts "$mod/settings.gradle.kts"
             (cd "$mod" && chmod +x gradlew && ./gradlew buildAndCollect -Pstonecutter.versions="$VERSION" $GRADLE_JDKS -x test --no-watch-fs)
           done
           ls celeris/build/libs/*/ velox/build/libs/*/ tessera/build/libs/*/
