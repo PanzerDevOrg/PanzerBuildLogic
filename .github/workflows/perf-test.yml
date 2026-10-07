@@ -1,0 +1,123 @@
+name: Server performance
+
+# How long a real server tick takes with thousands of dropped items: builds
+# Celeris (with its native libraries) and Velox for each build version, then
+# tools/panzer_mspt.py times a NeoForge dedicated server with `tick sprint`
+# three ways: no mods, Velox on Celeris's Java kernel, Velox on its native
+# kernel. Results go to the run summary and the mspt-<version> artifact.
+on:
+  workflow_dispatch:
+    inputs:
+      celeris-ref:
+        description: Celeris branch, tag or commit to build
+        default: master
+      velox-ref:
+        description: Velox branch, tag or commit to build
+        default: master
+      versions:
+        description: Build versions (comma-separated)
+        default: "1.21.1,26.1"
+      items:
+        description: Item counts (space-separated)
+        default: "2000 8000 20000"
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.plan.outputs.targets }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: plan
+        env:
+          VERSIONS: ${{ inputs.versions }}
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os, tomllib
+          common = tomllib.load(open("common.stonecutter.properties.toml", "rb"))
+          targets = []
+          for v in [x.strip() for x in os.environ["VERSIONS"].split(",") if x.strip()]:
+              block = common[v]
+              java = 25 if int(block["minecraft_version"].split(".")[0]) >= 26 else 21
+              targets.append({"version": v, "minecraft": block["minecraft_version"], "neoforge": block["neo_version"], "java": java})
+          print("targets=" + json.dumps(targets))
+          PY
+
+  mspt:
+    needs: plan
+    name: ${{ matrix.target.version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.plan.outputs.targets) }}
+    env:
+      VERSION: ${{ matrix.target.version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: panzer-build-logic
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          repository: PanzerDevOrg/Celeris
+          ref: ${{ inputs.celeris-ref }}
+          path: celeris
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          repository: PanzerDevOrg/Velox
+          ref: ${{ inputs.velox-ref }}
+          token: ${{ secrets.PANZER_SYNC_TOKEN }}
+          path: velox
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: zulu
+          java-version: |
+            21
+            25
+      - run: echo "GRADLE_JDKS=-Porg.gradle.java.installations.fromEnv=JAVA_HOME_21_X64,JAVA_HOME_25_X64" >> "$GITHUB_ENV"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches/modules-2
+            ~/.gradle/caches/neoformruntime
+            ~/.gradle/wrapper/dists
+          key: gradle-join-${{ runner.os }}-${{ matrix.target.version }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: Build Celeris (with natives) and Velox for ${{ matrix.target.version }}
+        run: |
+          set -euo pipefail
+          for mod in celeris velox; do
+            cp panzer-build-logic/shared/mod/settings.gradle.kts "$mod/settings.gradle.kts"
+          done
+          (cd celeris && chmod +x gradlew && ./gradlew buildAndCollect -Pstonecutter.versions="$VERSION" -Ppanzer.loaders=neoforge \
+              -Ppanzer.native.build=true $GRADLE_JDKS -x test --no-watch-fs)
+          (cd velox && chmod +x gradlew && ./gradlew buildAndCollect -Pstonecutter.versions="$VERSION" $GRADLE_JDKS -x test --no-watch-fs)
+          ls celeris/build/libs/*/ velox/build/libs/*/
+          unzip -l celeris/build/libs/*/celeris-*+"$VERSION".jar | grep -E "natives/linux" || true
+
+      - name: Time the server
+        run: |
+          set -euo pipefail
+          celeris=$(ls celeris/build/libs/*/celeris-*+"$VERSION".jar)
+          velox=$(ls velox/build/libs/*/velox-*+"$VERSION".jar)
+          python3 panzer-build-logic/tools/panzer_mspt.py --minecraft "${{ matrix.target.minecraft }}" \
+            --neoforge "${{ matrix.target.neoforge }}" --java "${{ matrix.target.java }}" \
+            --mods "$PWD/$celeris" "$PWD/$velox" --items ${{ inputs.items }} \
+            --work mspt --summary "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: mspt-${{ matrix.target.version }}
+          path: |
+            mspt/mspt.json
+            mspt/server-*/logs/
+            mspt/server-*/join-console.log
+          if-no-files-found: ignore
