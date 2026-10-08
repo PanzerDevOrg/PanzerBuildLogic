@@ -208,31 +208,32 @@ object ModPackaging {
         val collect = project.tasks.register("collectNatives", Copy::class.java) {
             group = "panzer"
             description = "Stages natives/<os>/<arch>/ into the jar as natives/<os>-<arch>/."
-            val missing = mutableListOf<String>()
-            var fatal = false
+            // Every selected file is declared whether or not it exists yet: the host's
+            // may be built by buildNative<Name> in this same run (-Ppanzer.native.build),
+            // and a missing source is simply skipped by the copy. Which ones are
+            // missing is therefore decided when the task runs, not when it is configured.
+            val expected = mutableListOf<ExpectedNative>()
             for (spec in specs) {
                 for (platform in spec.platforms.filter(::selected)) {
                     val file = sourceRoot.resolve(platform.sourcePath).resolve(spec.fileName(platform))
-                    if (file.exists()) {
-                        from(file) {
-                            into("natives/${platform.classifier}")
-                            spec.jarName(platform)?.let { name -> rename { name } }
-                        }
-                        continue
+                    from(file) {
+                        into("natives/${platform.classifier}")
+                        spec.jarName(platform)?.let { name -> rename { name } }
                     }
                     val hostRequired = spec.required && collecting && platform == host
-                    if (strict || hostRequired) fatal = true
-                    if (strict || spec.required) {
-                        missing += "${spec.name} for ${platform.classifier} (natives/${platform.sourcePath}/${spec.fileName(platform)})"
-                    }
+                    expected += ExpectedNative(file, "${spec.name} for ${platform.classifier} (natives/${platform.sourcePath}/${spec.fileName(platform)})",
+                        strict || hostRequired, strict || spec.required)
                 }
             }
-            if (missing.isNotEmpty()) {
-                val message = "[panzer] Missing native libraries: ${missing.joinToString()}. Build them " +
-                        "(buildNatives, or CI) first; without them those platforms use the mod's Java fallback."
-                if (fatal) throw GradleException(message) else project.logger.warn(message)
-            }
             into(outDir)
+            doFirst {
+                val missing = expected.filter { it.report && !it.file.exists() }
+                if (missing.isNotEmpty()) {
+                    val message = "[panzer] Missing native libraries: ${missing.joinToString { it.label }}. Build them " +
+                            "(buildNatives, or CI) first; without them those platforms use the mod's Java fallback."
+                    if (expected.any { it.fatal && !it.file.exists() }) throw GradleException(message) else logger.warn(message)
+                }
+            }
         }
 
         project.extensions.getByType(SourceSetContainer::class.java).named("main") {
@@ -240,6 +241,10 @@ object ModPackaging {
         }
         project.tasks.named("processResources") { dependsOn(collect) }
     }
+
+    /** A native library collectNatives stages, checked for when the task runs. */
+    private data class ExpectedNative(val file: java.io.File, val label: String, val fatal: Boolean, val report: Boolean) :
+        java.io.Serializable
 
     /** Accepts `linux-x86_64`, `linux_x86_64` and Rust-style triples (`x86_64-pc-windows-msvc`). */
     private fun normalizeTarget(raw: String): String = when {
