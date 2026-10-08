@@ -126,11 +126,8 @@ object ModPackaging {
             inputs.property("version", props.modVersion)
             into(project.rootProject.layout.buildDirectory.dir("libs/${props.modVersion}"))
         }
-        // A mod publishing to Maven (e.g. Celeris) also refreshes mavenLocal, so
-        // dependent mods built next to it pick up the new jar.
-        project.pluginManager.withPlugin("maven-publish") {
-            collect.configure { dependsOn("publishToMavenLocal") }
-        }
+        // Publishing is never a side effect of building: mods that depend on this
+        // one get a local build through an explicit `publishToMavenLocal`.
     }
 
     /**
