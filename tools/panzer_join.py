@@ -41,7 +41,8 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from panzer_compat import BUILD_LOGIC, NEOFORGE_MAVEN, java_home, moddev_version  # noqa: E402
+from panzer_compat import BUILD_LOGIC, NEOFORGE_MAVEN, moddev_version  # noqa: E402
+from panzer_mod import java_env  # noqa: E402
 
 PORT = 25565
 JOINED = re.compile(r"joined the game|logged in with entity id")
@@ -257,8 +258,7 @@ def put_mods(mods: Path, jars: list[str]) -> None:
 
 def start_client(root: Path, log: Path, fabric: bool = False) -> subprocess.Popen:
     # Fabric Loom 1.18 itself needs Gradle on Java 25.
-    env = dict(os.environ, JAVA_HOME=java_home(25 if fabric else 21))
-    env["PATH"] = f"{env['JAVA_HOME']}/bin{os.pathsep}{env['PATH']}"
+    env = java_env(25 if fabric else 21)
     env.setdefault("SDL_VIDEO_FORCE_EGL", "1")
     jdks = ",".join(k for k in ("JAVA_HOME_21_X64", "JAVA_HOME_25_X64") if k in os.environ)
     command = ["bash", "gradlew", "runClient" if fabric else "runJoin", "--no-daemon", "--console=plain", "--no-watch-fs"]
@@ -298,8 +298,7 @@ def kill_tree(proc: subprocess.Popen) -> None:
 
 def run_scenario(s: dict, args, work: Path) -> tuple[bool, list[str]]:
     name = re.sub(r"[^\w.-]+", "-", s["name"])
-    server_env = dict(os.environ, JAVA_HOME=java_home(args.java))
-    server_env["PATH"] = f"{server_env['JAVA_HOME']}/bin{os.pathsep}{server_env['PATH']}"
+    server_env = java_env(args.java)
     server_root = work / f"server-{name}"
     shutil.rmtree(server_root, ignore_errors=True)
     server_loader = s.get("server_loader", "neoforge")

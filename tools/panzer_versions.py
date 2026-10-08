@@ -16,7 +16,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from panzer_mod import BUILD_LOGIC, COMMON_TOML, Mod, PanzerError, read_toml
+from panzer_mod import BUILD_LOGIC, COMMON_TOML, Mod, PanzerError, java_for, read_toml
 
 LOCAL_FILE = Path(".panzer") / "versions"
 
@@ -36,7 +36,7 @@ def matrix(build_logic: Path = BUILD_LOGIC) -> list[dict]:
         block = common.get(v, {})
         mc = block.get("minecraft_version", v)
         rows.append({"version": v, "minecraft": mc, "neoforge": block.get("neo_version", "?"),
-                     "java": 25 if int(re.findall(r"\d+", mc)[0]) >= 26 else 21})
+                     "java": java_for(mc)})
     return rows
 
 

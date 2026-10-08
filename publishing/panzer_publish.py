@@ -129,11 +129,14 @@ class ModConfig:
 
 
 def java_for(minecraft: str) -> int:
-    """Same rule as panzer-build-logic's ModBuildProperties.requiredJava."""
-    parts = [int(p) for p in re.findall(r"\d+", minecraft)[:3]]
-    if parts and parts[0] >= 26:
-        return 25
-    return 21
+    """panzer_mod.java_for (ModBuildProperties.requiredJava), or the same rule when the publisher runs on its own."""
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+        from panzer_mod import java_for as shared
+    except ImportError:
+        parts = [int(p) for p in re.findall(r"\d+", minecraft)[:3]]
+        return 25 if parts and parts[0] >= 26 else 21
+    return shared(minecraft)
 
 
 def read_mod_toml(root: Path) -> tuple[dict, list[str]]:
@@ -211,7 +214,7 @@ def load_config(root: Path) -> ModConfig:
             raise PublishError(f'["{build}"] builds against {block.get("minecraft_version", build)}, which is not in game_versions {gv}')
         for loader in loaders:
             name = build if loader == "neoforge" else f"{build}-{loader}"
-            builds.append(Build(name, gv, int(block.get("java", java_for(build))), loader))
+            builds.append(Build(name, gv, int(block.get("java", java_for(block.get("minecraft_version", build)))), loader))
     if not builds:
         raise PublishError("[stonecutter] versions is empty")
 

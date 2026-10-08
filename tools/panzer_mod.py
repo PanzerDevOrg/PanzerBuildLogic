@@ -169,6 +169,21 @@ def java_for(minecraft: str) -> int:
     return 25 if parts and parts[0] >= 26 else 21
 
 
+def java_home(java: int) -> str:
+    """The JDK for `java`: JAVA_HOME_<n>_X64 (setup-java's names), or JAVA_HOME for 21."""
+    home = os.environ.get(f"JAVA_HOME_{java}_X64") or (os.environ.get("JAVA_HOME") if java == 21 else None)
+    if not home:
+        raise PanzerError(f"no Java {java} (set JAVA_HOME_{java}_X64)")
+    return home
+
+
+def java_env(java: int) -> dict[str, str]:
+    """This process's environment with JAVA_HOME and PATH pointing at JDK `java`."""
+    env = dict(os.environ, JAVA_HOME=java_home(java))
+    env["PATH"] = f"{env['JAVA_HOME']}/bin{os.pathsep}{env['PATH']}"
+    return env
+
+
 # --------------------------------------------------------------------------- registry
 
 

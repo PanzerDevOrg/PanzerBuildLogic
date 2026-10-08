@@ -43,14 +43,10 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-from panzer_mod import Mod, PanzerError
+from panzer_mod import Mod, PanzerError, java_env, java_for, java_home  # noqa: F401 (re-exported)
 import panzer_versions
 
 NEOFORGE_MAVEN = "https://maven.neoforged.net/releases/net/neoforged/neoforge"
-
-
-def java_for(minecraft: str) -> int:
-    return 25 if int(minecraft.split(".")[0]) >= 26 else 21
 
 
 def plan(mod: Mod, releases: list[panzer_versions.Release], only: list[str] | None = None) -> list[dict]:
@@ -158,13 +154,6 @@ def copy_widened(jar: Path, target: Path) -> None:
             out.writestr(info, data)
 
 
-def java_home(java: int) -> str:
-    home = os.environ.get(f"JAVA_HOME_{java}_X64") or (os.environ.get("JAVA_HOME") if java == 21 else None)
-    if not home:
-        raise PanzerError(f"no Java {java} (set JAVA_HOME_{java}_X64)")
-    return home
-
-
 def run(mod: Mod, version: str, target: dict, work: Path) -> tuple[bool, list[str]]:
     """Installs NeoForge `target` in `work`, runs the mod's check there; (passed, report lines)."""
     cfg = mod.config.get("compat") or {}
@@ -174,8 +163,7 @@ def run(mod: Mod, version: str, target: dict, work: Path) -> tuple[bool, list[st
     server = work / f"server-{mc}"
     shutil.rmtree(server, ignore_errors=True)
     server.mkdir(parents=True)
-    env = dict(os.environ, JAVA_HOME=java_home(target["java"]))
-    env["PATH"] = f"{env['JAVA_HOME']}/bin{os.pathsep}{env['PATH']}"
+    env = java_env(target["java"])
 
     installer = work / f"neoforge-{neoforge}-installer.jar"
     if not installer.is_file():
@@ -270,8 +258,7 @@ def run_client(mod: Mod, version: str, target: dict, work: Path) -> tuple[bool, 
     (game / "config").mkdir(exist_ok=True)
     (game / "config" / "fml.toml").write_text("earlyWindowControl = false\n")
 
-    env = dict(os.environ, JAVA_HOME=java_home(21))
-    env["PATH"] = f"{env['JAVA_HOME']}/bin{os.pathsep}{env['PATH']}"
+    env = java_env(21)
     # 26.3+ opens its window through SDL3, whose GLX visual matching finds nothing on
     # Xvfb + Mesa; EGL (what Mesa offers there anyway) works. GLFW-era versions ignore it.
     env.setdefault("SDL_VIDEO_FORCE_EGL", "1")

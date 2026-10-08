@@ -32,7 +32,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from panzer_compat import java_home  # noqa: E402
+from panzer_mod import java_env, java_home  # noqa: E402
 from panzer_join import Server, install_server, put_mods  # noqa: E402
 
 SPRINT = re.compile(r"Sprint completed with ([\d.,]+) ticks per second, or ([\d.,]+) ms per tick")
@@ -141,8 +141,7 @@ def measure(config: dict, args, work: Path, base: Path) -> dict:
     put_mods(root / "mods", config["mods"])
     with open(root / "user_jvm_args.txt", "a", encoding="utf-8") as f:
         f.write("\n" + "\n".join(["-Xms4G", "-Xmx4G", *config["jvm"]]) + "\n")
-    env = dict(os.environ, JAVA_HOME=java_home(args.java))
-    env["PATH"] = f"{env['JAVA_HOME']}/bin{os.pathsep}{env['PATH']}"
+    env = java_env(args.java)
     server = Server(root, env, ["bash", "run.sh", "nogui"])
     result = {"config": config["name"], "runs": []}
     if not server.start(60 * 10):
@@ -235,8 +234,7 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
     work = args.work.resolve()
     work.mkdir(parents=True, exist_ok=True)
-    env = dict(os.environ, JAVA_HOME=java_home(args.java))
-    env["PATH"] = f"{env['JAVA_HOME']}/bin{os.pathsep}{env['PATH']}"
+    env = java_env(args.java)
     base = work / "base"
     if not (base / "run.sh").is_file():
         install_server(base, args.neoforge, env, work)
