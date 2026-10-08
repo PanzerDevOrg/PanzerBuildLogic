@@ -249,7 +249,10 @@ jobs:
           echo "$DEPS" | python3 -c 'import json,sys; [print(d["id"], d["repo"], d["versions"]) for d in json.load(sys.stdin)]' |
           while read -r id repo versions; do
             echo "::group::$repo -> mavenLocal ($versions)"
-            (cd "../dep-$id" && chmod +x gradlew && ./gradlew publishToMavenLocal -Pstonecutter.versions="$versions" $GRADLE_JDKS -x test --no-watch-fs --stacktrace)
+            # With its native libraries for this runner (CMake): a dependency's tests
+            # may need them (Velox's parity check requires Celeris's native kernel).
+            (cd "../dep-$id" && chmod +x gradlew && ./gradlew publishToMavenLocal -Pstonecutter.versions="$versions" \
+                -Ppanzer.native.build=true $GRADLE_JDKS -x test --no-watch-fs --stacktrace)
             echo "::endgroup::"
           done
 
