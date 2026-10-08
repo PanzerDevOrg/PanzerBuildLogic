@@ -101,7 +101,9 @@ jobs:
           for mod in celeris velox tessera; do
             # The shared settings of this build logic (repositories its plugins need).
             cp panzer-build-logic/shared/mod/settings.gradle.kts "$mod/settings.gradle.kts"
-            (cd "$mod" && chmod +x gradlew && ./gradlew buildAndCollect -Pstonecutter.versions="$VERSION" $GRADLE_JDKS -x test --no-watch-fs)
+            # Celeris goes to mavenLocal too: the others build against Celeris's current API.
+            tasks="buildAndCollect"; [ "$mod" = celeris ] && tasks="buildAndCollect publishToMavenLocal"
+            (cd "$mod" && chmod +x gradlew && ./gradlew $tasks -Pstonecutter.versions="$VERSION" $GRADLE_JDKS -x test --no-watch-fs)
           done
           ls celeris/build/libs/*/ velox/build/libs/*/ tessera/build/libs/*/
 

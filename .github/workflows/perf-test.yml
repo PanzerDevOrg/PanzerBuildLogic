@@ -85,7 +85,8 @@ jobs:
           for mod in celeris velox; do
             cp panzer-build-logic/shared/mod/settings.gradle.kts "$mod/settings.gradle.kts"
           done
-          (cd celeris && chmod +x gradlew && ./gradlew buildAndCollect -Pstonecutter.versions="$VERSION" -Ppanzer.loaders=neoforge \
+          # publishToMavenLocal: Velox builds against Celeris's current API.
+          (cd celeris && chmod +x gradlew && ./gradlew buildAndCollect publishToMavenLocal -Pstonecutter.versions="$VERSION" -Ppanzer.loaders=neoforge \
               -Ppanzer.native.build=true $GRADLE_JDKS -x test --no-watch-fs)
           (cd velox && chmod +x gradlew && ./gradlew buildAndCollect -Pstonecutter.versions="$VERSION" $GRADLE_JDKS -x test --no-watch-fs)
           ls celeris/build/libs/*/ velox/build/libs/*/
