@@ -112,11 +112,11 @@ def jcmd(java: int, pid: str, *command: str) -> None:
 FRAME = re.compile(r"^\s+(\S+)\(.*\)\s+line:")
 
 
-def hot_methods(java: int, recording: Path, top: int = 25) -> list[tuple[str, float, float]]:
-    """(method, % of samples on top of the stack, % anywhere in the stack) from a JFR file."""
+def hot_methods(java: int, recording: Path, top: int = 25) -> list[tuple[str, float, float, str]]:
+    """(method, % of samples on top of the stack, % anywhere in the stack, its most common callers) from a JFR file."""
     out = subprocess.run([f"{java_home(java)}/bin/jfr", "print", "--events", "jdk.ExecutionSample", "--stack-depth", "64",
                           str(recording)], capture_output=True, text=True).stdout
-    self_count, total_count, samples = Counter(), Counter(), 0
+    self_count, total_count, callers, samples = Counter(), Counter(), {}, 0
     for event in out.split("jdk.ExecutionSample")[1:]:
         if "Server thread" not in event:
             continue
@@ -125,12 +125,21 @@ def hot_methods(java: int, recording: Path, top: int = 25) -> list[tuple[str, fl
             continue
         samples += 1
         self_count[frames[0]] += 1
+        callers.setdefault(frames[0], Counter())[" ← ".join(short(f) for f in frames[1:CALLER_DEPTH + 1])] += 1
         for f in set(frames):
             total_count[f] += 1
     if not samples:
         return []
-    return [(m, 100 * self_count[m] / samples, 100 * total_count[m] / samples)
+    return [(m, 100 * self_count[m] / samples, 100 * total_count[m] / samples, callers[m].most_common(1)[0][0])
             for m, _ in self_count.most_common(top)]
+
+
+CALLER_DEPTH = 4
+
+
+def short(frame: str) -> str:
+    """net.minecraft.world.entity.Entity.move -> Entity.move"""
+    return ".".join(frame.split(".")[-2:])
 
 
 def measure(config: dict, args, work: Path, base: Path) -> dict:
@@ -206,8 +215,9 @@ def table(results: list[dict], header: str) -> list[str]:
     for res in results:
         if res.get("hot"):
             out += ["", f"<details><summary>{res['config']}: where the server thread spends its time (JFR)</summary>", "",
-                    "| Method | Self | Total |", "|---|---|---|"]
-            out += [f"| `{m}` | {s:.1f}% | {t:.1f}% |" for m, s, t in res["hot"]]
+                    "| Method | Self | Total | Mostly called from |", "|---|---|---|---|"]
+            out += [f"| `{m}` | {s:.1f}% | {t:.1f}% | {c and f'`{c}`'} |" for m, s, t, *rest in res["hot"]
+                    for c in [rest[0] if rest else ""]]
             out += ["", "</details>"]
     for res in results:
         if res.get("error"):
