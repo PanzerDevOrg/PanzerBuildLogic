@@ -39,12 +39,27 @@ on:
         type: string
         default: ""
       build-logic-ref:
+        description: panzer-build-logic commit for the tools (default the commit of this workflow)
         type: string
-        default: master
+        default: ""
       versions:
         description: Build only these Minecraft versions (comma-separated; may name ones the mod excludes, to try a port)
         type: string
         default: ""
+    # Passed by name from each mod's ci.yml (never `secrets: inherit`): the
+    # store tokens for the release job, and panzer-build-logic's own token
+    # when it builds a mod from its Actions tab.
+    secrets:
+      MODRINTH_TOKEN:
+        required: false
+      CURSEFORGE_TOKEN:
+        required: false
+      PANZER_SYNC_TOKEN:
+        required: false
+
+# Read-only unless a job says otherwise (maven, release).
+permissions:
+  contents: read
 
 env:
   PANZER: panzer-build-logic/tools/panzer.py
@@ -80,7 +95,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           repository: PanzerDevOrg/PanzerBuildLogic
-          ref: ${{ inputs.build-logic-ref }}
+          ref: ${{ inputs.build-logic-ref || job.workflow_sha }}
           path: panzer-build-logic
           persist-credentials: false
 
@@ -209,7 +224,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           repository: PanzerDevOrg/PanzerBuildLogic
-          ref: ${{ inputs.build-logic-ref }}
+          ref: ${{ inputs.build-logic-ref || job.workflow_sha }}
           path: panzer-build-logic
           persist-credentials: false
 
@@ -340,7 +355,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           repository: PanzerDevOrg/PanzerBuildLogic
-          ref: ${{ inputs.build-logic-ref }}
+          ref: ${{ inputs.build-logic-ref || job.workflow_sha }}
           path: panzer-build-logic
           persist-credentials: false
       - name: JDKs and Gradle caches
@@ -378,15 +393,19 @@ jobs:
   release:
     needs: [plan, build, maven]
     if: ${{ !cancelled() && needs.build.result == 'success' && needs.maven.result != 'failure' }}
-    uses: PanzerDevOrg/PanzerBuildLogic/.github/workflows/mod-release.yml@master
+    # $/: this repository at this workflow's own commit.
+    uses: $/.github/workflows/mod-release.yml
     with:
       jars-artifact: ${{ needs.plan.outputs.jars-artifact }}
       dry-run: ${{ needs.plan.outputs.publish != 'true' }}
       targets: ${{ inputs.targets }}
-      build-logic-ref: ${{ inputs.build-logic-ref }}
+      build-logic-ref: ${{ inputs.build-logic-ref }}  # empty: mod-release checks out its own commit, the same as this one
       mod-repository: ${{ inputs.mod-repository }}
       mod-ref: ${{ inputs.mod-ref }}
       preview-name: ${{ inputs.mod-repository && format('release-preview-{0}', needs.plan.outputs.mod-id) || 'release-preview' }}
-    secrets: inherit
+    secrets:
+      MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+      CURSEFORGE_TOKEN: ${{ secrets.CURSEFORGE_TOKEN }}
+      PANZER_SYNC_TOKEN: ${{ secrets.PANZER_SYNC_TOKEN }}
     permissions:
       contents: write

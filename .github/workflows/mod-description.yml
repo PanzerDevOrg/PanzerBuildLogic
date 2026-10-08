@@ -13,8 +13,9 @@ on:
         type: boolean
         default: false
       build-logic-ref:
+        description: panzer-build-logic commit for the tools (default the commit of this workflow)
         type: string
-        default: master
+        default: ""
     secrets:
       MODRINTH_TOKEN:
         required: false
@@ -31,7 +32,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           repository: PanzerDevOrg/PanzerBuildLogic
-          ref: ${{ inputs.build-logic-ref }}
+          ref: ${{ inputs.build-logic-ref || job.workflow_sha }}
           path: panzer-build-logic
       - uses: actions/setup-python@v6
         with:

@@ -131,6 +131,15 @@ class Sync(unittest.TestCase):
         with self.assertRaises(PanzerError):
             Legal(load_mod(self.root))
 
+    def test_shared_workflows_are_pinned_to_a_commit(self):
+        panzer_sync.apply(panzer_sync.plan(self.mod))
+        for name in ("ci.yml", "descriptions.yml"):
+            text = (self.root / ".github" / "workflows" / name).read_text()
+            self.assertNotIn(panzer_sync.PIN_MARK, text)
+            self.assertNotIn("@master", text)
+            self.assertNotIn("secrets: inherit", text)
+            self.assertRegex(text, r"PanzerBuildLogic/\.github/workflows/mod-[a-z]+\.yml@[0-9a-f]{40} # panzer-build-logic")
+
     def test_plan_and_apply(self):
         plan = panzer_sync.plan(self.mod)
         paths = {c.path: c.action for c in plan.changes}

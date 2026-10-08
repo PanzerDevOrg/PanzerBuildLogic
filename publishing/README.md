@@ -71,7 +71,8 @@ game_versions = ["1.21", "1.21.1"]   # what this jar is published for
 ```
 
 Secrets: `MODRINTH_TOKEN`, `CURSEFORGE_TOKEN` (repository or organization
-secrets, passed with `secrets: inherit`; `panzer secrets` sets them from `.env`).
+secrets, which each mod's ci.yml passes by name, never with `secrets: inherit`;
+`panzer secrets` sets them from `.env`).
 A missing project id skips that site.
 
 ## Testing without publishing

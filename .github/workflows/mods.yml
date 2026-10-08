@@ -187,7 +187,8 @@ jobs:
       build-logic-ref: ${{ github.sha }}
       dry-run: ${{ 'true' }}
       versions: ${{ inputs.versions }}
-    secrets: inherit
+    secrets:
+      PANZER_SYNC_TOKEN: ${{ secrets.PANZER_SYNC_TOKEN }}
     permissions:
       contents: write
 

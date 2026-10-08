@@ -11,6 +11,7 @@ import difflib
 import os
 import re
 import stat
+import subprocess
 from pathlib import Path
 
 from panzer_legal import Legal
@@ -18,6 +19,22 @@ from panzer_mod import BUILD_LOGIC, Mod, PanzerError, read_toml
 
 GITIGNORE_BEGIN = "# >>> panzer-build-logic: managed by `panzer sync`, add your own entries below the block"
 GITIGNORE_END = "# <<< panzer-build-logic"
+# Shared workflows call panzer-build-logic's reusable ones at the commit they were
+# synced from: `@PANZER_BUILD_LOGIC_SHA` becomes `@<sha> # <label>`.
+PIN_MARK = "@PANZER_BUILD_LOGIC_SHA"
+
+
+def build_logic_pin(build_logic: Path = BUILD_LOGIC) -> str:
+    """`@<commit> # panzer-build-logic master, <date>` for the panzer-build-logic
+    checkout. Only the commit decides it, so `panzer check` in CI (run from the
+    pinned commit) agrees with the `panzer sync` that wrote it."""
+    def git(*args: str) -> str:
+        r = subprocess.run(["git", "-C", str(build_logic), *args], capture_output=True, text=True)
+        if r.returncode != 0:
+            raise PanzerError(f"pinning shared workflows needs panzer-build-logic as a git checkout: {r.stderr.strip()}")
+        return r.stdout.strip()
+    sha, date = git("log", "-1", "--format=%H %cs").split()
+    return f"@{sha} # panzer-build-logic master, {date} (no release tags yet)"
 
 
 @dataclasses.dataclass
@@ -122,6 +139,8 @@ def desired_files(mod: Mod, build_logic: Path = BUILD_LOGIC) -> tuple[dict[str, 
         if not source.is_file():
             raise PanzerError(f"shared/manifest.toml: source {source} of {path} does not exist")
         data = source.read_bytes()
+        if PIN_MARK.encode() in data:
+            data = data.replace(PIN_MARK.encode(), build_logic_pin(build_logic).encode())
         if entry.get("keep"):
             current = _read(root / path)
             data = keep_lines(data.decode("utf-8"), current.decode("utf-8") if current else None,
