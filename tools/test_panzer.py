@@ -388,7 +388,7 @@ class Versions(unittest.TestCase):
         plan = panzer_ci.plan(self.mod)
         self.assertEqual(plan["versions"], "1.21.1,1.21.10")
         self.assertEqual(plan["gradle-versions"], "")
-        self.assertEqual(plan["java"], "21")
+        self.assertEqual(plan["java"], "21\n25")  # 25 always: Gradle runs on it (Loom)
         self.assertEqual(plan["display"], "false")
         self.mod.config.setdefault("ci", {})["display"] = True
         self.assertEqual(panzer_ci.plan(self.mod)["display"], "true")
